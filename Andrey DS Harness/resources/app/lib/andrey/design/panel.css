@@ -1,0 +1,246 @@
+/* Andrey Design canvas panel. All classes are prefixed adz-. */
+#andrey-design-root {
+  --adz-bg: #1f1f22;
+  --adz-panel: #26262a;
+  --adz-panel-2: #2c2c31;
+  --adz-text: #eceff4;
+  --adz-dim: #a0a6b0;
+  --adz-line: rgba(255, 255, 255, 0.08);
+  --adz-accent: #4c8dff;
+  --adz-danger: #e06c75;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: none;
+  flex-direction: column;
+  background: var(--adz-bg);
+  color: var(--adz-text);
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  user-select: none;
+}
+
+#andrey-design-root * { box-sizing: border-box; }
+
+.adz-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--adz-panel);
+  border-bottom: 1px solid var(--adz-line);
+}
+
+.adz-title { font-weight: 600; font-size: 15px; margin-right: 6px; }
+
+.adz-spacer { flex: 1; }
+
+.adz-select,
+.adz-input {
+  background: var(--adz-panel-2);
+  color: var(--adz-text);
+  border: 1px solid var(--adz-line);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  min-width: 0;
+}
+
+.adz-select:focus,
+.adz-input:focus { border-color: var(--adz-accent); }
+
+.adz-doc-select { min-width: 160px; max-width: 260px; }
+
+.adz-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--adz-line);
+  border-radius: 8px;
+  background: var(--adz-panel-2);
+  color: var(--adz-text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.adz-btn:hover { background: var(--adz-accent); color: #fff; border-color: transparent; }
+.adz-btn:disabled { opacity: 0.45; cursor: default; background: var(--adz-panel-2); color: var(--adz-text); }
+.adz-btn--ghost { background: transparent; }
+.adz-btn--primary { background: var(--adz-accent); border-color: transparent; color: #fff; }
+.adz-btn--primary:hover { filter: brightness(1.08); background: var(--adz-accent); }
+.adz-btn:focus-visible,
+.adz-tool:focus-visible,
+.adz-close:focus-visible,
+.adz-mini:focus-visible { outline: 2px solid var(--adz-accent); outline-offset: 1px; }
+
+.adz-close {
+  border: 0;
+  background: transparent;
+  color: var(--adz-dim);
+  font-size: 20px;
+  line-height: 1;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.adz-close:hover { background: var(--adz-danger); color: #fff; }
+
+.adz-save { font-size: 11px; color: var(--adz-dim); }
+.adz-save--busy { color: var(--adz-accent); }
+.adz-save--error { color: var(--adz-danger); }
+
+.adz-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 248px;
+  min-height: 0;
+}
+
+.adz-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 6px;
+  background: var(--adz-panel);
+  border-right: 1px solid var(--adz-line);
+  align-items: center;
+}
+
+.adz-tool {
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--adz-dim);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.adz-tool:hover { background: var(--adz-panel-2); color: var(--adz-text); }
+.adz-tool.is-on { background: var(--adz-accent); color: #fff; }
+.adz-sep { width: 20px; height: 1px; background: var(--adz-line); margin: 4px 0; }
+
+.adz-center { position: relative; min-width: 0; min-height: 0; background: var(--adz-bg); }
+.adz-canvas-host { position: absolute; inset: 0; }
+.adz-canvas { display: block; width: 100%; height: 100%; outline: none; }
+
+.adz-side {
+  background: var(--adz-panel);
+  border-left: 1px solid var(--adz-line);
+  overflow: auto;
+  padding-bottom: 12px;
+}
+
+.adz-side-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--adz-dim);
+  padding: 10px 12px 4px;
+}
+
+.adz-props { display: flex; flex-direction: column; gap: 2px; padding: 0 10px; }
+
+.adz-prop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.adz-prop__label { flex: 0 0 92px; font-size: 11px; color: var(--adz-dim); }
+.adz-prop .adz-input { flex: 1; width: 100%; }
+.adz-prop .adz-select { flex: 1; }
+
+.adz-layers { margin-top: 6px; border-top: 1px solid var(--adz-line); }
+.adz-layer-list { padding: 4px 8px; }
+
+.adz-layer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 8px;
+}
+.adz-layer:hover { background: var(--adz-panel-2); }
+.adz-layer.is-on { background: color-mix(in srgb, var(--adz-accent) 18%, transparent); }
+
+.adz-layer__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 4px 2px;
+  cursor: pointer;
+}
+.adz-layer__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  border: 1px solid var(--adz-dim);
+  flex: none;
+}
+.adz-layer__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.adz-layer__actions { display: flex; gap: 1px; opacity: 0; }
+.adz-layer:hover .adz-layer__actions,
+.adz-layer.is-on .adz-layer__actions { opacity: 1; }
+
+.adz-mini {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--adz-dim);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.adz-mini:hover { background: var(--adz-panel); color: var(--adz-text); }
+.adz-mini--delete:hover { color: var(--adz-danger); }
+
+.adz-layer-empty { padding: 10px 6px; color: var(--adz-dim); font-size: 12px; }
+
+.adz-ai {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--adz-panel);
+  border-top: 1px solid var(--adz-line);
+}
+.adz-ai__left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.adz-ai__input { flex: 1; padding: 8px 10px; font-size: 14px; }
+.adz-ai__model { max-width: 220px; }
+.adz-ai__right { display: flex; align-items: center; gap: 8px; }
+.adz-ai__status { color: var(--adz-dim); font-size: 12px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .adz-main { grid-template-columns: 40px minmax(0, 1fr) 200px; }
+  .adz-ai__model { display: none; }
+}
+.adz-head {
+  min-height: 48px;
+  padding-right: 168px; /* native window buttons sit over the top-right corner */
+  -webkit-app-region: no-drag;
+}
+
+.adz-back {
+  font-weight: 600;
+  flex: none;
+}

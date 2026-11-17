@@ -1,0 +1,2 @@
+﻿"Andrey DS Harness/DeepSeek Harness.exe" filter=lfs diff=lfs merge=lfs -text
+"Andrey DS Harness/resources/app/dsh/node_modules/@deepseek-ai/libreoffice-kit-win32-x64/bin/dsoffice.exe" filter=lfs diff=lfs merge=lfs -text
