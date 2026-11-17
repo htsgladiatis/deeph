@@ -359,7 +359,7 @@
         state.models.forEach((model) => { counts[model.name] = (counts[model.name] || 0) + 1 })
         modelSelect.textContent = ''
         state.models.forEach((model) => {
-          const label = counts[model.name] > 1 ? `${model.name} � ${model.provider}` : model.name
+          const label = counts[model.name] > 1 ? `${model.name} · ${model.provider}` : model.name
           const option = el('option', null, label)
           option.value = model.name
           option.dataset.provider = model.provider

@@ -5,7 +5,7 @@
 // that runs once per page load. Everything it adds is marked with `data-andrey`
 // or a known id, is purely additive, and never rewrites their markup.
 ;(() => {
-  const VERSION_LABEL = 'Andrey Version 0.3'
+  const VERSION_LABEL = 'Andrey Version 0.2'
   const STYLE_ID = 'andrey-extra-style'
   const BADGE_ID = 'andrey-version-badge'
   const LIMITS_ID = 'andrey-limits'
@@ -747,24 +747,6 @@
     document.getElementById('andrey-accounts-backdrop')?.remove()
   }
 
-  function placeDesignLauncher() {
-    if (document.getElementById('andrey-design-launcher') !== null) return
-    const limits = document.getElementById('andrey-limits') || document.getElementById('andrey-version-badge')
-    if (!limits || !limits.parentElement) return
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.id = 'andrey-design-launcher'
-    button.title = '������ (Ctrl+Shift+D)'
-    button.style.cssText = 'margin-left:6px;padding:3px 9px;border-radius:999px;border:1px solid var(--dsw-alias-border-l3, rgba(128,128,128,0.25));background:transparent;color:inherit;font:inherit;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:5px'
-    button.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.8 13.2l1-3.4 6.6-6.6a1.7 1.7 0 0 1 2.4 2.4l-6.6 6.6-3.4 1z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span>������</span>'
-    button.addEventListener('click', (event) => {
-      event.preventDefault()
-      event.stopPropagation()
-      if (window.AndreyDesign) window.AndreyDesign.open()
-    }, true)
-    limits.insertAdjacentElement('afterend', button)
-  }
-
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') closeAccounts()
   })
@@ -911,7 +893,6 @@
       placeMenuItem()
       placeAd()
       placeDesignItem()
-      placeDesignLauncher()
     })
     observer.observe(document.body, { childList: true, subtree: true })
   }
@@ -924,17 +905,45 @@
     }
   }, true)
 
+  function findDesignMenu() {
+    const menus = [...document.querySelectorAll('[role="menu"]')]
+    if (menus.length === 0) return null
+    for (const menu of menus) {
+      const classes = typeof menu.className === 'string' ? menu.className : ''
+      if (classes.includes('moreMenu') || menu.closest('[class*="moreMenu"]') !== null) return menu
+    }
+    // Class hashes change between builds, so fall back to geometry: the More
+    // menu opens next to the sidebar's own launcher, not in the content area.
+    for (const button of document.querySelectorAll('nav button[aria-haspopup="menu"]')) {
+      const label = `${button.getAttribute('aria-label') ?? ''} ${button.textContent ?? ''}`
+      if (!/more|ещё|еще/i.test(label)) continue
+      const anchor = button.getBoundingClientRect()
+      let best = null
+      let bestDistance = Infinity
+      for (const menu of menus) {
+        const rect = menu.getBoundingClientRect()
+        if (rect.width === 0) continue
+        const distance = Math.hypot(rect.left - anchor.left, rect.top - anchor.bottom)
+        if (distance < bestDistance) {
+          bestDistance = distance
+          best = menu
+        }
+      }
+      if (best !== null && bestDistance < 160) return best
+    }
+    return null
+  }
+
   function placeDesignItem() {
     if (document.getElementById('andrey-design-menu-item') !== null) return
-    const menus = document.querySelectorAll('[role="menu"]')
-    const menu = menus[menus.length - 1]
-    if (!menu) return
+    const menu = findDesignMenu()
+    if (menu === null) return
     const item = document.createElement('button')
     item.type = 'button'
     item.id = 'andrey-design-menu-item'
     item.setAttribute('role', 'menuitem')
     item.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:left'
-    item.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.8 13.2l1-3.4 6.6-6.6a1.7 1.7 0 0 1 2.4 2.4l-6.6 6.6-3.4 1z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.6 4.2l2.2 2.2" stroke="currentColor" stroke-width="1.3"/></svg><span>������</span>'
+    item.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.8 13.2l1-3.4 6.6-6.6a1.7 1.7 0 0 1 2.4 2.4l-6.6 6.6-3.4 1z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.6 4.2l2.2 2.2" stroke="currentColor" stroke-width="1.3"/></svg><span>Дизайн</span>'
     item.addEventListener('click', (event) => {
       event.preventDefault()
       event.stopPropagation()

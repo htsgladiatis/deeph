@@ -11,7 +11,7 @@
  * unmaintainable for no gain — this fork is frozen, but it still has to be
  * something we can repair in a minute.
  *
- * So the additions live in `ui-renderer.js`, a plain script this module reads
+ * So the additions live in `ui-renderer.js` and `pet.js`, plain scripts this module reads
  * and runs in the page after every load. It is additive and idempotent: it marks
  * everything it adds and re-attaches itself if their React tree renders over it.
  *
@@ -22,8 +22,9 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
-const VERSION_LABEL = 'Andrey Version 0.3'
+const VERSION_LABEL = 'Andrey Version 0.2'
 const SCRIPT_FILE = path.join(__dirname, 'ui-renderer.js')
+const PET_FILE = path.join(__dirname, 'pet.js')
 const DESIGN_DIR = path.join(__dirname, 'design')
 const DESIGN_SCRIPTS = ['ops.js', 'canvas.js', 'panel.js']
 
@@ -37,7 +38,7 @@ function rendererScript() {
       .join('\n;\n')
     const css = fs.readFileSync(path.join(DESIGN_DIR, 'panel.css'), 'utf8')
     const style = `(() => { const node = document.createElement('style'); node.id = 'andrey-design-style'; node.textContent = ${JSON.stringify(css)}; document.head.appendChild(node); })();`
-    cached = [style, design, fs.readFileSync(SCRIPT_FILE, 'utf8')].join('\n;\n')
+    cached = [style, design, fs.readFileSync(SCRIPT_FILE, 'utf8'), fs.readFileSync(PET_FILE, 'utf8')].join('\n;\n')
   }
   return cached
 }
