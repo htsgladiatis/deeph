@@ -5,7 +5,7 @@
 // that runs once per page load. Everything it adds is marked with `data-andrey`
 // or a known id, is purely additive, and never rewrites their markup.
 ;(() => {
-  const VERSION_LABEL = 'Andrey Version 0.5'
+  const VERSION_LABEL = 'Andrey Version 0.5.1'
   const STYLE_ID = 'andrey-extra-style'
   const BADGE_ID = 'andrey-version-badge'
   const LIMITS_ID = 'andrey-limits'
@@ -1029,11 +1029,11 @@
     if (node === null) {
       node = document.createElement('div')
       node.id = 'andrey-handoff-toast'
-      node.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);z-index:2147483001;max-width:520px;padding:10px 16px;border-radius:10px;background:var(--dsw-alias-bg-l3,#2a2d31);border:0.5px solid var(--dsw-alias-border-l2,rgba(128,128,128,0.3));box-shadow:0 10px 30px rgba(0,0,0,0.35);font-size:13px;line-height:1.4'
+      node.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);z-index:2147483001;max-width:520px;padding:10px 16px;border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#111);border:0.5px solid var(--dsw-alias-border-l2,rgba(0,0,0,0.1));box-shadow:0 8px 24px rgba(0,0,0,0.16);font-size:13px;line-height:1.4'
       document.body.appendChild(node)
     }
     node.textContent = text
-    node.style.color = ok ? 'var(--dsw-alias-text-l1,inherit)' : 'var(--dsw-alias-text-danger,#e07a7a)'
+    node.style.color = ok ? 'var(--dsw-alias-label-primary,#111)' : 'var(--dsw-alias-state-error-primary,#c0392b)'
     clearTimeout(handoffToastTimer)
     handoffToastTimer = setTimeout(() => node.remove(), 4000)
   }
@@ -1080,7 +1080,7 @@
     row.setAttribute('role', 'menuitem')
     row.style.cssText = 'display:block;width:100%;padding:8px 12px;border:0;border-radius:7px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer'
     row.textContent = label
-    row.addEventListener('mouseenter', () => { row.style.background = 'var(--dsw-alias-bg-l4,rgba(128,128,128,0.16))' })
+    row.addEventListener('mouseenter', () => { row.style.background = 'var(--dsw-alias-bg-layer-3,rgba(0,0,0,0.06))' })
     row.addEventListener('mouseleave', () => { row.style.background = 'transparent' })
     row.addEventListener('click', (event) => {
       event.preventDefault()
@@ -1101,7 +1101,7 @@
     const menu = document.createElement('div')
     menu.id = 'andrey-handoff-menu'
     menu.setAttribute('role', 'menu')
-    menu.style.cssText = 'position:fixed;z-index:2147483000;min-width:280px;padding:4px;border-radius:10px;background:var(--dsw-alias-bg-l2,#1f2124);color:var(--dsw-alias-text-l1,inherit);border:0.5px solid var(--dsw-alias-border-l2,rgba(128,128,128,0.3));box-shadow:0 12px 32px rgba(0,0,0,0.35);font-size:13px'
+    menu.style.cssText = 'position:fixed;z-index:2147483000;min-width:280px;padding:4px;border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#111);border:0.5px solid var(--dsw-alias-border-l2,rgba(0,0,0,0.1));box-shadow:0 8px 24px rgba(0,0,0,0.16);font-size:13px'
     menu.appendChild(handoffMenuRow('Скопировать хендофф', () => copyHandoff(sessionId)))
     menu.appendChild(handoffMenuRow('Новый чат с хендоффом', () => startHandoff(sessionId)))
     document.body.appendChild(menu)
