@@ -5,7 +5,7 @@
 // that runs once per page load. Everything it adds is marked with `data-andrey`
 // or a known id, is purely additive, and never rewrites their markup.
 ;(() => {
-  const VERSION_LABEL = 'Andrey Version 0.4'
+  const VERSION_LABEL = 'Andrey Version 0.5'
   const STYLE_ID = 'andrey-extra-style'
   const BADGE_ID = 'andrey-version-badge'
   const LIMITS_ID = 'andrey-limits'
@@ -954,14 +954,164 @@
     menu.appendChild(item)
   }
 
-  /**
-   * Discoverable entry for the handoff: the context menu only exists on session
-   * rows, session headers and tabs, so the More menu carries the same action and
-   * delegates to the client plugin's bridge.
-   */
+  /* ---- Hand Off to Another Agent ------------------------------------- */
+  //
+  // Client plugins never reach the client manifest in this build (see the note
+  // in ui-inject.cjs), so the handoff lives here: the conversation root carries
+  // `data-conversation-session`, the transcript comes from the app's own
+  // `api/session.markdown` route, and `navigator.clipboard` copies the result.
+
+  const HANDOFF_TAIL_CHARS = 12000
+  const HANDOFF_GOAL_CHARS = 700
+  let handoffToastTimer = 0
+
+  function handoffSessionId() {
+    const root = document.querySelector('[data-conversation-session]')
+    const fromDom = root === null ? null : root.getAttribute('data-conversation-session')
+    if (typeof fromDom === 'string' && fromDom !== '') return fromDom
+    try {
+      const raw = localStorage.getItem('dsh.sessions.current')
+      const id = raw === null ? null : JSON.parse(raw)?.sessionId
+      if (typeof id === 'string' && id !== '') return id
+    } catch {
+      /* a malformed entry is not worth a crash */
+    }
+    return null
+  }
+
+  function handoffGoal(markdown) {
+    const block = []
+    let started = false
+    for (const line of markdown.split('\n')) {
+      if (line.startsWith('>')) {
+        started = true
+        block.push(line.replace(/^>\s?/, ''))
+        continue
+      }
+      if (started) break
+    }
+    return block.join('\n').trim().slice(0, HANDOFF_GOAL_CHARS)
+  }
+
+  function handoffTail(markdown) {
+    if (markdown.length <= HANDOFF_TAIL_CHARS) return markdown.trim()
+    const sliced = markdown.slice(-HANDOFF_TAIL_CHARS)
+    const aligned = sliced.search(/\n(?:>\s|\*\*Assistant\*\*)/)
+    return (aligned > 0 ? sliced.slice(aligned + 1) : sliced).trim()
+  }
+
+  function buildHandoff(markdown, sessionId) {
+    const heading = markdown.split('\n').find((line) => line.startsWith('# '))
+    const title = heading === undefined ? sessionId : heading.slice(2).trim()
+    const goal = handoffGoal(markdown)
+    return [
+      `# Handoff: ${title}`,
+      '',
+      'You are taking over this work from a previous session. The context below is established state: do not redo finished work and do not ask the user to repeat it.',
+      '',
+      `- Source session: ${sessionId}`,
+      `- Transferred: ${new Date().toISOString()}`,
+      ...goal === '' ? [] : ['', '## Original goal', '', goal],
+      '',
+      '## Latest context',
+      '',
+      handoffTail(markdown),
+      '',
+      '## Your task',
+      '',
+      'Continue from where this session stopped. Verify the current state in the workspace first, then proceed with the next concrete step. If the goal is ambiguous, ask one clarifying question before changing anything.',
+      '',
+    ].join('\n')
+  }
+
+  function handoffToast(text, ok) {
+    let node = document.getElementById('andrey-handoff-toast')
+    if (node === null) {
+      node = document.createElement('div')
+      node.id = 'andrey-handoff-toast'
+      node.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);z-index:2147483001;max-width:520px;padding:10px 16px;border-radius:10px;background:var(--dsw-alias-bg-l3,#2a2d31);border:0.5px solid var(--dsw-alias-border-l2,rgba(128,128,128,0.3));box-shadow:0 10px 30px rgba(0,0,0,0.35);font-size:13px;line-height:1.4'
+      document.body.appendChild(node)
+    }
+    node.textContent = text
+    node.style.color = ok ? 'var(--dsw-alias-text-l1,inherit)' : 'var(--dsw-alias-text-danger,#e07a7a)'
+    clearTimeout(handoffToastTimer)
+    handoffToastTimer = setTimeout(() => node.remove(), 4000)
+  }
+
+  async function readHandoff(sessionId) {
+    const query = new URLSearchParams({ sessionId }).toString()
+    const response = await fetch(`api/session.markdown?${query}`)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return buildHandoff(await response.text(), sessionId)
+  }
+
+  async function copyHandoff(sessionId) {
+    try {
+      const text = await readHandoff(sessionId)
+      await navigator.clipboard.writeText(text)
+      handoffToast(`Хендофф скопирован: ${text.length} символов`, true)
+      return true
+    } catch (error) {
+      handoffToast(`Не удалось прочитать сессию: ${String(error?.message ?? error)}`, false)
+      return false
+    }
+  }
+
+  async function startHandoff(sessionId) {
+    const copied = await copyHandoff(sessionId)
+    if (!copied) return
+    const button = [...document.querySelectorAll('button')].find((element) => /new session|новая сессия/i.test(element.textContent ?? ''))
+    if (button === undefined) {
+      handoffToast('Контекст в буфере — создайте новый чат и вставьте его', true)
+      return
+    }
+    button.click()
+    handoffToast('Контекст в буфере — вставьте его в новый чат', true)
+  }
+
+  function closeHandoffMenu() {
+    const menu = document.getElementById('andrey-handoff-menu')
+    if (menu !== null) menu.remove()
+  }
+
+  function handoffMenuRow(label, run) {
+    const row = document.createElement('button')
+    row.type = 'button'
+    row.setAttribute('role', 'menuitem')
+    row.style.cssText = 'display:block;width:100%;padding:8px 12px;border:0;border-radius:7px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer'
+    row.textContent = label
+    row.addEventListener('mouseenter', () => { row.style.background = 'var(--dsw-alias-bg-l4,rgba(128,128,128,0.16))' })
+    row.addEventListener('mouseleave', () => { row.style.background = 'transparent' })
+    row.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      closeHandoffMenu()
+      run()
+    }, true)
+    return row
+  }
+
+  function openHandoffMenu(point) {
+    closeHandoffMenu()
+    const sessionId = handoffSessionId()
+    if (sessionId === null) {
+      handoffToast('Откройте чат, который нужно передать', false)
+      return
+    }
+    const menu = document.createElement('div')
+    menu.id = 'andrey-handoff-menu'
+    menu.setAttribute('role', 'menu')
+    menu.style.cssText = 'position:fixed;z-index:2147483000;min-width:280px;padding:4px;border-radius:10px;background:var(--dsw-alias-bg-l2,#1f2124);color:var(--dsw-alias-text-l1,inherit);border:0.5px solid var(--dsw-alias-border-l2,rgba(128,128,128,0.3));box-shadow:0 12px 32px rgba(0,0,0,0.35);font-size:13px'
+    menu.appendChild(handoffMenuRow('Скопировать хендофф', () => copyHandoff(sessionId)))
+    menu.appendChild(handoffMenuRow('Новый чат с хендоффом', () => startHandoff(sessionId)))
+    document.body.appendChild(menu)
+    const rect = menu.getBoundingClientRect()
+    menu.style.left = `${Math.max(8, Math.min(point.x, window.innerWidth - rect.width - 8))}px`
+    menu.style.top = `${Math.max(8, Math.min(point.y, window.innerHeight - rect.height - 8))}px`
+  }
+
   function placeHandoffItem() {
     if (document.getElementById('andrey-handoff-menu-item') !== null) return
-    if (window.__andreyHandoff === undefined) return
     const menu = findDesignMenu()
     if (menu === null) return
     const item = document.createElement('button')
@@ -975,10 +1125,33 @@
       event.stopPropagation()
       const rect = item.getBoundingClientRect()
       closeMenus()
-      if (window.__andreyHandoff) window.__andreyHandoff.open({ x: rect.left + 8, y: rect.top })
+      openHandoffMenu({ x: rect.right + 6, y: rect.top })
     }, true)
     menu.appendChild(item)
   }
+
+  // Right-click inside the conversation. A non-empty selection keeps the native
+  // menu so selected text can still be copied; inputs keep it too.
+  document.addEventListener('contextmenu', (event) => {
+    if (event.defaultPrevented) return
+    const target = event.target
+    if (!(target instanceof Element)) return
+    if (target.closest('textarea, input, [contenteditable="true"]') !== null) return
+    if (target.closest('[data-conversation-session]') === null) return
+    const selection = window.getSelection()
+    if (selection !== null && selection.toString().trim() !== '') return
+    event.preventDefault()
+    openHandoffMenu({ x: event.clientX + 2, y: event.clientY + 2 })
+  }, true)
+
+  document.addEventListener('pointerdown', (event) => {
+    const menu = document.getElementById('andrey-handoff-menu')
+    if (menu !== null && !menu.contains(event.target)) closeHandoffMenu()
+  }, true)
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeHandoffMenu()
+  }, true)
 
   document.addEventListener('keydown', (event) => {
     if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'd') {

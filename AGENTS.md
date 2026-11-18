@@ -1,12 +1,12 @@
 # AGENTS.md
 
 ## Overview
-- Windows Electron desktop app snapshot/fork (**Andrey DS Harness V 0.2**), an unpacked distribution with no source build. Tracked on `main` -> `origin/main`: https://github.com/htsgladiatis/deeph
+- Windows Electron desktop app snapshot/fork (**Andrey DS Harness V 0.5**), an unpacked distribution with no source build. Tracked on `main` -> `origin/main`: https://github.com/htsgladiatis/deeph
 - There are no build, lint, typecheck, test, or CI commands in this repo; do not invent them.
 - `resources/app` is unpacked (no asar). Changes apply only after a **full restart** of `Andrey DS Harness\DeepSeek Harness.exe`: `ui-inject.cjs` caches the injected bundle per process, so reloading a window is not enough.
 
 ## Architecture
-- App root: `Andrey DS Harness/`. The intended edit surface is `resources/app/lib/andrey/` plus the fork's own client plugin at `resources/app/dsh/node_modules/@andrey/dsh-andrey-extra/` (loaded by the `desktop` profile as `andrey-extra`). Everything else under `dsh/` is vendor.
+- App root: `Andrey DS Harness/`. The edit surface is `resources/app/lib/andrey/`. A client plugin at `resources/app/dsh/node_modules/@andrey/dsh-andrey-extra/` is declared by the `desktop` profile, but it never loads: in this build a newly inserted plugin package never reaches `__DSH_BOOT__.entries` (the note at the top of `ui-inject.cjs` explains why), so that package is inert. Everything else under `dsh/` is vendor.
 - `resources/app/package.json` -> `main: lib/andrey/boot.cjs`. Boot isolates data, applies the active freePi account, starts loopback routes, installs UI injection, then imports the original `../main.js` (`andreyAgent.hostMain`).
 - `ui-inject.cjs` concatenates `design/panel.css` + `design/{ops,canvas,panel}.js` + `ui-renderer.js` + `pet.js` into one classic script run on every `did-finish-load`. Additions must stay additive/idempotent and never throw into boot (errors are swallowed).
 - Local loopback HTTP on `127.0.0.1:39147`: freePi/freeBuff OpenAI bridges, accounts/limits/ads, and the design API (see `Andrey DS Harness/README.md`, "Дизайн/API").
@@ -16,7 +16,7 @@
 - **Design** ("Дизайн") has exactly one entry point: a row in the sidebar **More** popup. `findDesignMenu` matches `[role="menu"]` with class `moreMenu` (geometry fallback to the sidebar launcher). Do not append it to arbitrary menus and do not re-add the old pill next to the limits plate.
 - **Pet** (`pet.js`): fixed canvas blob with states idle/working/replying/waiting/celebrate/error. State comes from `fetch` calls to LLM routes plus a 600 ms DOM poll (stop button, `aria-busy`/`data-streaming`, permission dialogs); keep it silent when both signals are absent. Toggle lives in the More menu; `localStorage` keys `andrey-pet-enabled`, `andrey-pet-pos`.
 - Injected files are classic scripts (no `import`/`export`); design exposes `window.AndreyDesign` (`Ctrl+Shift+D`).
-- **Hand Off** lives in the `andrey-extra` client plugin, not in the injected bundle: it registers a `contextMenus` contribution for targets `session`/`sessionHeader`/`tab`, reads the transcript from the existing `api/session.markdown?sessionId=…` route, and either copies a compact handoff or calls `ctx.uiWorkspace.startSession(workspaceId, { prompt })` (prefilled draft, not auto-sent). The plugin also exposes `window.__andreyHandoff` (`open/copy/start` on the main-view session) because the injected bundle cannot reach cordis services; `ui-renderer.js` uses it for the "Передать агенту" row in the More menu (same menu as "Дизайн"), which is the discoverable entry — the context menu itself only appears on session rows, session headers and tabs. New UI actions belong here; the plugin only loads on a full app restart.
+- **Hand Off** ("Передать агенту") lives in `ui-renderer.js`, not in a plugin. Two entries open the same small menu: a capture-phase `contextmenu` listener on `[data-conversation-session]` (skipped over inputs and over a non-empty selection, so native copy stays) and a row in the More menu. The menu fetches `api/session.markdown?sessionId=…` (a relative URL resolves through `dsh-app://app`), builds a compact handoff (goal + last 12k chars + task), then copies it with `navigator.clipboard.writeText` — clipboard writes need a focused window — or copies it and clicks "New Session". The session id comes from the `data-conversation-session` attribute, with `localStorage['dsh.sessions.current']` as fallback.
 - Cyrillic strings: edit only with Read/Edit/Write tools. PowerShell 5.1 `Set-Content`/`Out-File`/here-strings add a BOM and mojibake — this already corrupted these files once.
 
 ## Verification
