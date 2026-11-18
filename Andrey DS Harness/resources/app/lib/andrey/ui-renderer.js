@@ -5,7 +5,7 @@
 // that runs once per page load. Everything it adds is marked with `data-andrey`
 // or a known id, is purely additive, and never rewrites their markup.
 ;(() => {
-  const VERSION_LABEL = 'Andrey Version 0.3'
+  const VERSION_LABEL = 'Andrey Version 0.4'
   const STYLE_ID = 'andrey-extra-style'
   const BADGE_ID = 'andrey-version-badge'
   const LIMITS_ID = 'andrey-limits'
@@ -893,6 +893,7 @@
       placeMenuItem()
       placeAd()
       placeDesignItem()
+      placeHandoffItem()
     })
     observer.observe(document.body, { childList: true, subtree: true })
   }
@@ -949,6 +950,32 @@
       event.stopPropagation()
       closeMenus()
       if (window.AndreyDesign) window.AndreyDesign.open()
+    }, true)
+    menu.appendChild(item)
+  }
+
+  /**
+   * Discoverable entry for the handoff: the context menu only exists on session
+   * rows, session headers and tabs, so the More menu carries the same action and
+   * delegates to the client plugin's bridge.
+   */
+  function placeHandoffItem() {
+    if (document.getElementById('andrey-handoff-menu-item') !== null) return
+    if (window.__andreyHandoff === undefined) return
+    const menu = findDesignMenu()
+    if (menu === null) return
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.id = 'andrey-handoff-menu-item'
+    item.setAttribute('role', 'menuitem')
+    item.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:left'
+    item.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 8h9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M8.2 3.7L12.5 8l-4.3 4.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Передать агенту</span>'
+    item.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const rect = item.getBoundingClientRect()
+      closeMenus()
+      if (window.__andreyHandoff) window.__andreyHandoff.open({ x: rect.left + 8, y: rect.top })
     }, true)
     menu.appendChild(item)
   }
