@@ -1,4 +1,4 @@
-# Andrey DS Harness V 0.2
+# Andrey DS Harness V 0.3
 
 Копия DeepSeek Harness с собственным слоем `lib/andrey` (загружается через
 `resources/app/package.json` → `main: lib/andrey/boot.cjs`). Правки в этом каталоге
