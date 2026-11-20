@@ -69,6 +69,42 @@ const PORT = 39147
 const RUN_TIMEOUT_MS = Number(process.env.FREEBUFF_RUN_TIMEOUT_MS) || 600_000
 /** How long a request may wait for the account's current run to finish. */
 const QUEUE_TIMEOUT_MS = Number(process.env.FREEBUFF_QUEUE_TIMEOUT_MS) || 900_000
+/** Characters of conversation text forwarded to the CLI, newest turns first. */
+const PROMPT_CHARS = Math.max(2_000, Number(process.env.FREEBUFF_PROMPT_CHARS) || 24_000)
+/** Characters of the harness system prompt kept as a preamble (0 disables it). */
+const SYSTEM_CHARS = Math.max(0, Number(process.env.FREEBUFF_SYSTEM_CHARS) || 4_000)
+
+/**
+ * A failure that another attempt cannot fix.
+ *
+ * Every freebuff attempt is a full CLI run, and some screens (an exhausted
+ * hour, a spend confirmation) spend hours just by being confirmed. Reporting
+ * these as 409 keeps the harness from retrying them five times, which its
+ * policy does for a 5xx.
+ */
+class BlockedError extends Error {
+  constructor(message, status = 409) {
+    super(message)
+    this.name = 'BlockedError'
+    this.status = status
+  }
+}
+
+/**
+ * Screens that will never turn into an answer on their own.
+ *
+ * The CLI draws these instead of an input line. Entering them blindly either
+ * buys the hour or waits ten minutes for a transcript that never appears, so
+ * they are reported for what they are. Call this only while no transcript
+ * exists yet: the running answer is drawn on the same screen, and an answer
+ * that merely mentions hours must not end its own turn.
+ */
+function blockedScreen(flat) {
+  if (/not enough hours|out of hours/i.test(flat)) return 'freebuff has no hours left for this account'
+  if (/session (is )?over|holding queued messages/i.test(flat)) return 'freebuff session ended; rejoin in the CLI'
+  if (/(confirm|approve)[^.]{0,80}(hours|wallet|balance)/i.test(flat)) return 'freebuff asks to confirm spending hours'
+  return null
+}
 
 /** Model names last read from the picker; `/v1/models` serves these. */
 let modelCache = []
@@ -161,9 +197,11 @@ function flatScreen(screen) {
  * itself survives a closed console and lives on as a 100+ MB zombie holding
  * its session lock, which is how one timed-out run makes the next ones fail.
  * A run's CLI is ephemeral, so the run kills every freebuff.exe whose command
- * line carries this run's cwd — the run directory is unique, and matching by
- * command line (not by `session.pid`, which is ConPTY's short-lived agent)
- * cannot touch the terminal panel's own CLI, whose cwd is a real workspace.
+ * line carries this run's cwd — matching by command line (not by `session.pid`,
+ * which is ConPTY's short-lived agent). With the default scratch cwd that path
+ * is unique. When `FREEBUFF_CWD` points at a project the path is shared, so a
+ * CLI the user runs manually in that same project would be killed too; the pty
+ * cleanup still disposes our own child either way.
  */
 function killCli(cwd) {
   if (typeof cwd !== 'string' || cwd === '') return
@@ -189,21 +227,37 @@ function killCli(cwd) {
  * TUI looked dead for 30 s and the request failed. Screens that can never turn
  * into an input line are reported for what they are instead of timing out.
  */
-async function waitForTui(screen, { timeoutMs = 30_000 } = {}) {
+async function waitForTui(screen, { timeoutMs = 30_000, isAborted, session } = {}) {
   const deadline = Date.now() + timeoutMs
   const startedAt = Date.now()
   let previous = ''
   let stableTicks = 0
   let promptSeen = false
+  let trustAnswered = false
   while (Date.now() < deadline) {
     await sleep(600)
+    if (isAborted?.() === true) throw new BlockedError('client disconnected', 499)
     const text = screen()
     const flat = flatScreen(screen)
-    if (/Waiting for login|Press ENTER to login/i.test(flat)) throw new Error('freebuff CLI is not logged in')
-    if (/trust this (folder|repository)|do you trust the (agents|files)|load .*\.agents/i.test(flat)) {
-      throw new Error('freebuff asks to trust agents in this folder')
+    if (/Waiting for login|Press ENTER to login/i.test(flat)) throw new BlockedError('freebuff CLI is not logged in')
+    if (/trust this (folder|repository)|do you trust the (agents|files)|load .*\.agents|Load and run these\?/i.test(flat)) {
+      // Answer "no" explicitly instead of leaning on the Enter default: the
+      // prompt is `[y/N]` today, and a release that flips the default must not
+      // turn a blind Enter into "load this repository's agents".
+      if (session !== undefined && trustAnswered === false) {
+        trustAnswered = true
+        log('info', 'freebuff:trust-skipped')
+        session.write('n')
+        await sleep(120)
+        session.write('\r')
+        await sleep(600)
+        continue
+      }
+      throw new BlockedError('freebuff asks to trust agents in this folder')
     }
-    if (/update available|new version of freebuff/i.test(flat)) throw new Error('freebuff asks to update itself')
+    if (/update available|new version of freebuff/i.test(flat)) throw new BlockedError('freebuff asks to update itself')
+    const blocked = blockedScreen(flat)
+    if (blocked !== null) throw new BlockedError(blocked)
 
     // The prompt text soft-wraps at the terminal width, so match the flattened
     // screen; the raw text is the fallback for a frame that is still drawing.
@@ -359,23 +413,41 @@ async function pickModel(session, screen, wanted) {
 }
 
 /**
- * Only the conversation reaches the CLI: our system prompt and tool catalog
- * describe *this* harness, and Freebuff runs its own agent with its own tools.
- * The tail is kept because the TUI takes one message per run anyway.
+ * The conversation reaches the CLI as one message, preceded by a trimmed
+ * system preamble. The tool catalog and harness plumbing in our system prompt
+ * are useless to Freebuff's own agent, but the project instructions are not:
+ * dropping the whole block silently changed how the agent behaved. The tail of
+ * the conversation is kept because the TUI takes one message per run anyway.
  */
-function messagesToPrompt(messages, limit = 12000) {
+function messagesToPrompt(messages, limit = PROMPT_CHARS, systemLimit = SYSTEM_CHARS) {
+  const system = []
   const turns = []
   for (const message of messages ?? []) {
-    if (message?.role === 'system') continue
     const content = typeof message?.content === 'string'
       ? message.content
       : Array.isArray(message?.content)
-        ? message.content.map((part) => (part?.type === 'text' ? part.text : '')).join('')
+        ? message.content.map((part) => {
+          if (part?.type === 'text') return part.text
+          // The CLI transport is text-only. A marker keeps the model from
+          // assuming the message was complete when a screenshot came with it.
+          if (part?.type === 'image_url' || part?.type === 'input_image' || part?.type === 'image') return '[image omitted]'
+          return ''
+        }).join('\n')
         : ''
     if (content.trim() === '') continue
+    if (message?.role === 'system') {
+      system.push(content.trim())
+      continue
+    }
     turns.push({ role: message.role === 'assistant' ? 'Assistant' : 'User', content: content.trim() })
   }
-  if (turns.length === 0) return ''
+
+  const joined = system.join('\n\n')
+  const preamble = systemLimit > 0 && joined !== ''
+    ? `[System]\n${joined.length > systemLimit ? `${joined.slice(0, systemLimit).trimEnd()} …` : joined}`
+    : ''
+
+  if (turns.length === 0) return preamble
 
   // Keep the newest turns, then restore order.
   const kept = []
@@ -385,11 +457,13 @@ function messagesToPrompt(messages, limit = 12000) {
     kept.unshift(turns[at])
     size += turns[at].content.length
   }
-  if (kept.length === 0) return ''
+  if (kept.length === 0) return preamble
 
   const last = kept.at(-1)
-  if (kept.length === 1 && last.role === 'User') return last.content
-  return kept.map((turn) => `[${turn.role}]\n${turn.content}`).join('\n\n')
+  const body = kept.length === 1 && last.role === 'User'
+    ? last.content
+    : kept.map((turn) => `[${turn.role}]\n${turn.content}`).join('\n\n')
+  return preamble === '' ? body : `${preamble}\n\n${body}`
 }
 
 /**
@@ -440,7 +514,34 @@ function pruneStaleLocks(cliHome) {
   return removed
 }
 
-/** Spawn the CLI TUI in a scratch folder; returns the session and its screen. */
+/**
+ * The project the CLI should work in, or null for the scratch folder.
+ *
+ * An OpenAI request carries no working directory, so the folder comes from
+ * `FREEBUFF_CWD`. A missing or invalid path is not fatal: the run falls back to
+ * the scratch folder instead of failing on a typo in the environment.
+ */
+function projectCwd() {
+  const raw = process.env.FREEBUFF_CWD
+  if (typeof raw !== 'string' || raw.trim() === '') return null
+  const resolved = path.resolve(raw.trim())
+  try {
+    if (fs.statSync(resolved).isDirectory()) return resolved
+  } catch {
+    /* fall through */
+  }
+  log('warn', 'freebuff:cwd-invalid', { raw })
+  return null
+}
+
+/**
+ * Spawn the CLI TUI; returns the session and its screen.
+ *
+ * Two directories: `runDir` is this run's private scratch folder and stays the
+ * process cwd, so a stray file never lands in the user's project and `killCli`
+ * can match this run by a path nobody else uses. `cwd` is where the agent works
+ * — the project from `FREEBUFF_CWD`, or the scratch folder when it is unset.
+ */
 function spawnCli(cwdLabel) {
   const account = activeAccount()
   const cliHome = account.cliHome ?? undefined
@@ -451,12 +552,13 @@ function spawnCli(cwdLabel) {
   // actually owns the CLI binary.
   const baseEnv = { ...process.env, USERPROFILE: systemHome(), HOME: systemHome() }
   const inspect = cliStatus({ home: account.appHome, userHome: cliHome, env: baseEnv })
-  if (!inspect.cliFound) throw new Error('freebuff CLI not found')
-  if (!inspect.loggedIn) throw new Error(`freebuff account not logged in: ${account.id}`)
+  if (!inspect.cliFound) throw new BlockedError('freebuff CLI not found')
+  if (!inspect.loggedIn) throw new BlockedError(`freebuff account not logged in: ${account.id}`)
 
   const { nodePty: pty, TerminalCtor: Terminal } = runtime()
-  const cwd = path.join(dataRoot(), 'freebuff-runs', account.id, cwdLabel)
-  fs.mkdirSync(cwd, { recursive: true })
+  const runDir = path.join(dataRoot(), 'freebuff-runs', account.id, cwdLabel)
+  fs.mkdirSync(runDir, { recursive: true })
+  const cwd = projectCwd() ?? runDir
 
   // free-pi's own command builder mirrors the account token into the CLI's
   // config and switches HOME/USERPROFILE for non-default accounts, which is what
@@ -467,13 +569,13 @@ function spawnCli(cwdLabel) {
     userHome: cliHome,
     env: baseEnv,
   })
-  if (!command.ok) throw new Error(`freebuff CLI unavailable: ${command.error}`)
+  if (!command.ok) throw new BlockedError(`freebuff CLI unavailable: ${command.error}`)
 
   const term = new Terminal({ cols: COLS, rows: ROWS, allowProposedApi: true, scrollback: 300 })
   const session = createPtySession({
     file: command.file,
     args: command.args,
-    cwd,
+    cwd: runDir,
     cols: COLS,
     rows: ROWS,
     env: command.env,
@@ -484,6 +586,20 @@ function spawnCli(cwdLabel) {
 }
 
 /**
+ * Strip bytes that would break out of a bracketed paste.
+ *
+ * The terminal delivers the paste payload literally, but the CLI's stdin parser
+ * still scans it for the end marker: one ESC in the prompt ends the paste early
+ * and every character after it arrives as a keystroke. Control characters have
+ * no use in a prompt anyway, so they are dropped; tabs and newlines stay.
+ */
+function sanitizeForPaste(text) {
+  return String(text ?? '')
+    .replace(/\x1b/g, '')
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
+}
+
+/**
  * One CLI run: pty, optional model pick, typed conversation, transcript.
  *
  * `onReady` fires once the CLI accepts input (so a stream can open its response
@@ -491,11 +607,17 @@ function spawnCli(cwdLabel) {
  * run that hits its limit returns what was already written plus `partial: true`
  * instead of throwing the work away.
  */
-async function runFreebuff({ prompt, model, timeoutMs = RUN_TIMEOUT_MS, onReady, onUpdate }) {
+async function runFreebuff({ prompt, model, timeoutMs = RUN_TIMEOUT_MS, onReady, onUpdate, isAborted }) {
   const { session, screen, cwd, cliHome, accountId } = spawnCli(Date.now().toString(36))
 
+  // A closed request must not keep the CLI alive for ten minutes: the run is
+  // serialised per account, so a discarded turn also blocks every later one.
+  const ensureLive = () => {
+    if (isAborted?.() === true) throw new BlockedError('client disconnected', 499)
+  }
+
   try {
-    await waitForTui(screen)
+    await waitForTui(screen, { isAborted, session })
 
     const wanted = String(model ?? '').trim()
     if (wanted !== '') {
@@ -503,7 +625,7 @@ async function runFreebuff({ prompt, model, timeoutMs = RUN_TIMEOUT_MS, onReady,
       log('info', 'freebuff:model', { wanted, picked })
       if (!picked) {
         await leftOverPick(session)
-        throw new Error(`freebuff model not selectable: ${wanted}`)
+        throw new BlockedError(`freebuff model not selectable: ${wanted}`)
       }
       await sleep(500)
     }
@@ -517,10 +639,20 @@ async function runFreebuff({ prompt, model, timeoutMs = RUN_TIMEOUT_MS, onReady,
     const chatsDir = projectChatsDir({ cwd, userHome: cliHome ?? systemHome() })
 
     // A TUI input line, not a pipe: send it in chunks so the pty buffer and the
-    // terminal's own input handler both keep up.
-    const single = prompt.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim()
+    // terminal's own input handler both keep up. Bracketed paste does reach the
+    // composer, but the CLI drops line breaks inside it (0.2.36: pasted code
+    // arrives as a single line), so the prompt goes in as keystrokes with
+    // newlines flattened.
+    const single = sanitizeForPaste(prompt).replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim()
+    if (single.length !== prompt.trim().length) {
+      log('warn', 'freebuff:prompt-flattened', { chars: prompt.length, sent: single.length })
+    }
     for (let at = 0; at < single.length; at += 200) {
-      session.write(single.slice(at, at + 200))
+      ensureLive()
+      if (session.write(single.slice(at, at + 200)) === false) {
+        log('warn', 'freebuff:write-rejected', { at })
+        throw new BlockedError('freebuff pty stopped accepting input')
+      }
       await sleep(30)
     }
     await sleep(400)
@@ -531,10 +663,29 @@ async function runFreebuff({ prompt, model, timeoutMs = RUN_TIMEOUT_MS, onReady,
     // CLI writes `chat-messages.json` as soon as it takes the message, so a
     // missing file is a reliable "not submitted" signal: press Enter again and
     // fail fast instead of hanging. Extra Enters are harmless once a turn runs.
+    //
+    // Acceptance is matched by content, not by folder age: the CLI creates the
+    // chat folder while the TUI mounts, so a "new folder" baseline taken after
+    // typing misses this run's own transcript, and in a shared project folder
+    // older chats are everywhere. A chat that already holds our prompt is ours.
+    const promptKey = single.slice(0, 60).replace(/\s+/g, ' ')
     const transcriptIn = () => {
       try {
-        return fs.readdirSync(chatsDir)
-          .find((id) => fs.existsSync(path.join(chatsDir, id, 'chat-messages.json'))) ?? null
+        for (const id of fs.readdirSync(chatsDir).sort()) {
+          const file = path.join(chatsDir, id, 'chat-messages.json')
+          let raw = null
+          try {
+            raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+          } catch {
+            continue // mid-write JSON
+          }
+          if (!Array.isArray(raw)) continue
+          const taken = raw.some((message) => message?.variant === 'user'
+            && typeof message?.content === 'string'
+            && message.content.replace(/\s+/g, ' ').startsWith(promptKey))
+          if (taken) return id
+        }
+        return null
       } catch {
         return null
       }
@@ -543,8 +694,15 @@ async function runFreebuff({ prompt, model, timeoutMs = RUN_TIMEOUT_MS, onReady,
     for (let attempt = 0; attempt < 3 && accepted === null; attempt += 1) {
       const until = Date.now() + 15_000
       while (Date.now() < until && accepted === null) {
+        ensureLive()
         accepted = transcriptIn()
-        if (accepted === null) await sleep(300)
+        if (accepted === null) {
+          // An admission prompt replaces the input line here: the CLI took the
+          // keystrokes but asks for a spend confirmation before running them.
+          const blocked = blockedScreen(flatScreen(screen))
+          if (blocked !== null) throw new BlockedError(blocked)
+          await sleep(300)
+        }
       }
       if (accepted === null) {
         log('warn', 'freebuff:prompt-retry', { attempt: attempt + 1 })
@@ -563,6 +721,7 @@ async function runFreebuff({ prompt, model, timeoutMs = RUN_TIMEOUT_MS, onReady,
     let chatId = accepted
     let latest = { text: '', reasoning: '' }
     while (Date.now() < deadline) {
+      ensureLive()
       if (chatId === null) {
         try {
           chatId = fs.readdirSync(chatsDir).sort().at(-1) ?? null
@@ -583,6 +742,29 @@ async function runFreebuff({ prompt, model, timeoutMs = RUN_TIMEOUT_MS, onReady,
           const message = normalizeMessage(last)
           const text = message.text ?? ''
           const reasoning = message.reasoning ?? ''
+
+          // An agent question is a turn end, not an answer: the transcript only
+          // resumes when someone types a reply. Returning the question lets the
+          // user answer in the next message instead of waiting out the deadline.
+          const questions = (message.asks ?? [])
+            .flatMap((ask) => (ask.questions ?? []).map((entry) => entry.question))
+            .filter((line) => typeof line === 'string' && line.trim() !== '')
+          if (questions.length > 0) {
+            const asked = questions.join('\n\n')
+            // `raw` carries the question too: a stream flushes the tail from it,
+            // and a question that only lives in `text` never reaches the client.
+            const answer = text.trim() !== '' ? `${text.trim()}\n\n${asked}` : asked
+            log('info', 'freebuff:asked', { chatId, questions: questions.length })
+            return {
+              text: answer,
+              raw: answer,
+              partial: false,
+              cwd,
+              chatId,
+              accountId,
+            }
+          }
+
           if (text !== latest.text || reasoning !== latest.reasoning) {
             latest = { text, reasoning }
             onUpdate?.({ text, reasoning })
@@ -609,7 +791,7 @@ async function runFreebuff({ prompt, model, timeoutMs = RUN_TIMEOUT_MS, onReady,
     const chosen = answerText !== '' ? answerText : onlyReasoning
     if (chosen === '') throw new Error('freebuff run timed out')
     log('warn', 'freebuff:partial', { chars: chosen.length, chatId })
-    return { text: chosen, raw: latest.text, partial: true, cwd, chatId, accountId }
+    return { text: chosen, raw: latest.text, partial: true, reason: 'timeout', cwd, chatId, accountId }
   } finally {
     try { session.dispose() } catch { /* already gone */ }
     killCli(cwd)
@@ -630,7 +812,7 @@ async function leftOverPick(session) {
 async function listModels() {
   const { session, screen, cwd } = spawnCli('models')
   try {
-    await waitForTui(screen)
+    await waitForTui(screen, { session })
     const opened = await openPicker(session, screen)
     if (!opened.open) return []
     const press = createKeyDriver(session, screen)
@@ -737,6 +919,7 @@ async function handleChat(res, body) {
   const model = typeof request.model === 'string' && request.model !== '' ? request.model : (modelCache[0] ?? '')
   const stream = request.stream === true
   const prompt = messagesToPrompt(request.messages)
+  log('info', 'freebuff:prompt', { chars: prompt.length, messages: request.messages?.length ?? 0 })
   const id = `chatcmpl-${crypto.randomUUID()}`
   const created = Math.floor(Date.now() / 1000)
 
@@ -800,20 +983,24 @@ async function handleChat(res, body) {
   try {
     const accountId = activeAccount().id
     log('info', 'freebuff:request', { model, stream, chars: prompt.length, accountId })
+    const clientGone = () => res.destroyed === true || res.writableEnded === true
 
     const result = await accountQueue.run(accountId, () => runFreebuff({
       prompt,
       model,
+      isAborted: clientGone,
       onReady: () => { if (stream) startStream() },
       onUpdate: (snapshot) => { if (stream) flush(snapshot) },
     }), {
-      isAborted: () => res.destroyed === true || res.writableEnded === true,
+      isAborted: clientGone,
       onQueued: (position) => log('info', 'freebuff:queued', { accountId, position }),
     })
 
     log(result.partial ? 'warn' : 'info', 'freebuff:done', {
       chars: result.text.length,
       partial: result.partial === true,
+      reason: result.reason ?? null,
+      cwd: result.cwd,
     })
     const finish = result.partial ? 'length' : 'stop'
 
@@ -836,16 +1023,20 @@ async function handleChat(res, body) {
     }
   } catch (error) {
     const message = String(error?.message ?? error)
-    log('error', 'freebuff:failed', { message })
+    // 409 for states a retry cannot fix; the harness only retries 5xx.
+    const status = Number.isInteger(error?.status) ? error.status : 502
+    log('error', 'freebuff:failed', { message, status })
     if (headersSent) {
       // The stream is already open: an OpenAI-shaped error object is the only
       // way left to tell the client what happened.
       write(`data: ${JSON.stringify({ error: { message, type: 'provider_error' } })}\n\n`)
       write('data: [DONE]\n\n')
       if (!res.writableEnded) res.end()
-    } else {
-      res.writeHead(502, { 'content-type': 'application/json' })
+    } else if (status !== 499) {
+      res.writeHead(status, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: { message, type: 'provider_error' } }))
+    } else if (!res.writableEnded) {
+      res.end()
     }
   } finally {
     if (keepAlive) clearInterval(keepAlive)
@@ -1486,4 +1677,4 @@ function session_close(server) {
   server.close()
 }
 
-module.exports = { start, listModels, messagesToPrompt, PORT }
+module.exports = { start, listModels, messagesToPrompt, sanitizeForPaste, PORT }

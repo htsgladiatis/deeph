@@ -145,6 +145,7 @@ module.exports = {
   applyActivePiAccount,
   applyActivePiAccountSync,
   fetchCatalog,
+  runtimeRequire,
   toModels,
   BASE_URL,
   LOCAL_BASE_URL,

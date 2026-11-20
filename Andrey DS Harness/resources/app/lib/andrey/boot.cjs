@@ -43,6 +43,18 @@ try {
   /* boot continues on the profile as it is */
 }
 
+// Freebuff turns are CLI runs measured in minutes, so their provider entry gets
+// a stream timeout that outlives the queue and a retry count that starts no
+// second run. Same best-effort rule as above.
+try {
+  const { applyFreebuffProfileSync } = require('./freebuff-profile.cjs')
+  applyFreebuffProfileSync({
+    profilePath: path.join(process.env.DSH_HOME, 'profiles', 'desktop', 'cordis.patch.yml'),
+  })
+} catch {
+  /* boot continues on the profile as it is */
+}
+
 // The route is optional: a missing CLI or a busy port must never keep the host
 // from booting. Failures land in freebuff-route.log.
 //
