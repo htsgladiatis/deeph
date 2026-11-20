@@ -27,6 +27,8 @@
  * upstream errors reach their original caller untouched.
  */
 
+const { maybeCompressBody } = require('./context-compress.cjs')
+
 const BASE_URL = 'https://api.freepi.ai'
 const CLIENT_VERSION = '0.6.22'
 const REQUEST_TIMEOUT_MS = 180_000
@@ -146,7 +148,20 @@ async function handleModels(res, dataRoot, log) {
  * then stream the upstream response through unchanged.
  */
 function handleChat(req, res, { dataRoot, log }) {
-  return readBody(req).then((buffer) => serialize(async () => {
+  return readBody(req).then((rawBuffer) => serialize(async () => {
+    // A long session must not usher the whole history into the upstream and
+    // fly into a context-length error. Trim to the configured token budget;
+    // on the common path this returns the very same buffer, unchanged.
+    const compressed = maybeCompressBody(rawBuffer, { log })
+    const buffer = compressed.buffer
+    if (compressed.changed) {
+      log('info', 'freepi:context-compressed', {
+        originalTokens: compressed.originalTokens,
+        finalTokens: compressed.finalTokens,
+        removed: compressed.removed,
+      })
+    }
+
     const { account, token } = tokenFor(dataRoot)
     if (!token) {
       sendJson(res, 401, {
