@@ -827,6 +827,39 @@ async function listModels() {
   }
 }
 
+/**
+ * Token counts for the client's usage display.
+ *
+ * The CLI writes no token accounting anywhere we can read: the transcript has
+ * text, the run state has TUI state, and `/usage` in the CLI reports credits.
+ * The harness therefore used to receive zeros, which showed up as "no tokens"
+ * and a zero TPS. These are estimates from the same heuristic the renderer uses
+ * (~2 chars per token for Cyrillic, ~4 otherwise), and every run logs
+ * `freebuff:usage-estimated` so a diagnostic never mistakes them for a
+ * provider count.
+ */
+const CYRILLIC = /[\u0400-\u04FF]/g
+
+function estimateTokens(text) {
+  const value = String(text ?? '')
+  if (value === '') return 0
+  const match = value.match(CYRILLIC)
+  const cyrillic = match === null ? 0 : match.length
+  return Math.ceil(cyrillic / 2 + (value.length - cyrillic) / 4)
+}
+
+function usageFor({ promptTokens, answer, promptChars }) {
+  // Non-stream turns send the whole answer, a stream has already sent it
+  // delta by delta; both use the final text, so the count matches the display.
+  const prompt = promptTokens > 0 ? promptTokens : estimateTokens(promptChars)
+  const completion = estimateTokens(answer)
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+  }
+}
+
 function sseChunk(id, created, model, delta, finish = null) {
   return `data: ${JSON.stringify({
     id,
@@ -919,6 +952,13 @@ async function handleChat(res, body) {
   const model = typeof request.model === 'string' && request.model !== '' ? request.model : (modelCache[0] ?? '')
   const stream = request.stream === true
   const prompt = messagesToPrompt(request.messages)
+  // What the model actually received, for the usage estimate when the run ends.
+  const promptTokens = (request.messages ?? []).reduce((sum, message) => {
+    const content = message?.content
+    if (typeof content === 'string') return sum + estimateTokens(content)
+    if (!Array.isArray(content)) return sum + 4
+    return content.reduce((inner, part) => inner + (part?.type === 'text' ? estimateTokens(part.text) : 0), sum) + 4
+  }, 0)
   log('info', 'freebuff:prompt', { chars: prompt.length, messages: request.messages?.length ?? 0 })
   const id = `chatcmpl-${crypto.randomUUID()}`
   const created = Math.floor(Date.now() / 1000)
@@ -1003,10 +1043,32 @@ async function handleChat(res, body) {
       cwd: result.cwd,
     })
     const finish = result.partial ? 'length' : 'stop'
+    const usage = usageFor({ promptTokens, answer: result.text, promptChars: prompt })
+
+    // The CLI reports no usage, so this event marks the numbers as computed
+    // rather than received. Keep it next to `done` in the route log.
+    log('info', 'freebuff:usage-estimated', {
+      ...usage,
+      method: 'chars/4 · cyrillic/2',
+      answerChars: result.text.length,
+      promptChars: prompt.length,
+    })
 
     if (stream) {
       startStream()
       flushFinal(result.raw)
+      // An OpenAI-compatible client reads usage from the final chunk with an
+      // empty `choices` array (what `stream_options.include_usage` produces);
+      // pi-ai parses `chunk.usage` before it looks at `choices`, so the count
+      // lands even though this chunk carries no delta.
+      write(`data: ${JSON.stringify({
+        id,
+        object: 'chat.completion.chunk',
+        created,
+        model,
+        choices: [],
+        usage,
+      })}\n\n`)
       write(sseChunk(id, created, model, {}, finish))
       write('data: [DONE]\n\n')
       res.end()
@@ -1018,7 +1080,7 @@ async function handleChat(res, body) {
         created,
         model,
         choices: [{ index: 0, message: { role: 'assistant', content: result.text }, finish_reason: finish }],
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        usage,
       }))
     }
   } catch (error) {
