@@ -21,10 +21,69 @@
  */
 
 const CYRILLIC = /[\u0400-\u04FF]/g
-const DEFAULT_BUDGET = 120_000
+/** Matches the harness compaction trigger (compaction-profile.cjs): 166232 of a 200k window with a 32k answer reservation. */
+const DEFAULT_BUDGET = 166_232
 const MIN_BUDGET = 1_000
 
+/**
+ * freePi refuses a request body above roughly one mebibyte and reports it as
+ * `413 {code:"context_too_long"}`.
+ *
+ * The body is dominated by images: every screenshot in the history is re-encoded
+ * into every request, so a session with a dozen screenshots sends ~1.8MB while
+ * its text is only ~50k tokens. The route therefore drops the oldest image
+ * payloads (they become a one-line note) until the body fits. Text is never cut
+ * here — that stays the token budget's job.
+ */
+const DEFAULT_MAX_BODY_BYTES = 900_000
+const MIN_BODY_BYTES = 100_000
+
 const NOTICE = '[Context compaction: earlier conversation turns were removed to fit the context window. Continue from the retained messages below; do not refer to the removed turns as if they were still present.]'
+
+const IMAGE_NOTICE = '[screenshot dropped before sending: the request body did not fit the provider limit]'
+
+/** Length of the base64/data payload of an image part, or 0 for anything else. */
+function imagePayloadLength(part) {
+  if (!part || typeof part !== 'object') return 0
+  if (typeof part.image_url === 'string') return part.image_url.length
+  if (typeof part.image_url?.url === 'string') return part.image_url.url.length
+  if (typeof part.data === 'string') return part.data.length
+  if (typeof part.source?.data === 'string') return part.source.data.length
+  return 0
+}
+
+function normalizeBodyBytes(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number >= MIN_BODY_BYTES ? Math.floor(number) : DEFAULT_MAX_BODY_BYTES
+}
+
+/**
+ * Replace the oldest image payloads until the serialized body fits `maxBytes`.
+ * Mutates `body.messages` in place and reports what it did.
+ */
+function shrinkImagesToLimit(body, maxBytes = DEFAULT_MAX_BODY_BYTES) {
+  const bytesBefore = Buffer.byteLength(JSON.stringify(body), 'utf8')
+  const result = { changed: false, droppedImages: 0, bytesBefore, bytesAfter: bytesBefore }
+  if (bytesBefore <= maxBytes) return result
+
+  const images = []
+  for (const message of body.messages ?? []) {
+    if (!Array.isArray(message?.content)) continue
+    for (let index = 0; index < message.content.length; index += 1) {
+      if (imagePayloadLength(message.content[index]) > 0) images.push({ content: message.content, index })
+    }
+  }
+
+  for (const image of images) {
+    image.content[image.index] = { type: 'text', text: IMAGE_NOTICE }
+    result.droppedImages += 1
+    result.bytesAfter = Buffer.byteLength(JSON.stringify(body), 'utf8')
+    if (result.bytesAfter <= maxBytes) break
+  }
+
+  result.changed = result.droppedImages > 0
+  return result
+}
 
 function estimateTokens(text) {
   const value = String(text ?? '')
@@ -246,18 +305,24 @@ function maybeCompressBody(buffer, options = {}) {
   }
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return result
 
-  const compressed = compressMessages(body.messages, { budgetTokens: budget })
-  if (!compressed.changed) {
-    result.originalTokens = compressed.originalTokens
-    result.finalTokens = compressed.finalTokens
-    return result
-  }
+  // Route diagnostics: the caller logs these next to what the provider answers.
+  result.model = typeof body.model === 'string' ? body.model : null
+  result.maxTokens = Number(body.max_tokens ?? body.maxTokens) || null
+  result.messageCount = body.messages.length
 
-  result.buffer = Buffer.from(JSON.stringify({ ...body, messages: compressed.messages }), 'utf8')
-  result.changed = true
+  const compressed = compressMessages(body.messages, { budgetTokens: budget })
+  const outbound = compressed.changed ? { ...body, messages: compressed.messages } : body
+  const images = shrinkImagesToLimit(outbound, normalizeBodyBytes(options.maxBodyBytes ?? process.env.ANDREY_REQUEST_MAX_BYTES))
+
   result.originalTokens = compressed.originalTokens
   result.finalTokens = compressed.finalTokens
   result.removed = compressed.removed
+  result.imagesDropped = images.droppedImages
+  result.bytesAfter = images.bytesAfter
+
+  if (!compressed.changed && !images.changed) return result
+  result.buffer = Buffer.from(JSON.stringify(outbound), 'utf8')
+  result.changed = true
   return result
 }
 
@@ -266,6 +331,10 @@ module.exports = {
   messageTokens,
   compressMessages,
   maybeCompressBody,
+  shrinkImagesToLimit,
+  imagePayloadLength,
   DEFAULT_BUDGET,
+  DEFAULT_MAX_BODY_BYTES,
   NOTICE,
+  IMAGE_NOTICE,
 }

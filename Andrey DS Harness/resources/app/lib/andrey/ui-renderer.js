@@ -5,11 +5,16 @@
 // that runs once per page load. Everything it adds is marked with `data-andrey`
 // or a known id, is purely additive, and never rewrites their markup.
 ;(() => {
-  const VERSION_LABEL = 'Andrey Version 0.5.3'
+  const VERSION_LABEL = 'Andrey Version 0.5.4'
   const STYLE_ID = 'andrey-extra-style'
   const BADGE_ID = 'andrey-version-badge'
   const LIMITS_ID = 'andrey-limits'
-  const LIMITS_URL = 'http://127.0.0.1:39147/limits'
+  // The route steps to the next port when 39147 is busy (freebuff-route.cjs), so
+  // every URL here follows the port this boot actually bound, not the default.
+  const API_BASE = (typeof window.__ANDREY_API_BASE__ === 'string' && window.__ANDREY_API_BASE__ !== '')
+    ? window.__ANDREY_API_BASE__
+    : 'http://127.0.0.1:39147'
+  const LIMITS_URL = `${API_BASE}/limits`
 
   /* ---- styles -------------------------------------------------------- */
 
@@ -472,7 +477,7 @@
   /* ---- "More" menu: Accounts entry ---------------------------------- */
 
   const MENU_ITEM_ID = 'andrey-accounts-menu-item'
-  const ACCOUNTS_URL = 'http://127.0.0.1:39147/accounts'
+  const ACCOUNTS_URL = `${API_BASE}/accounts`
 
   /** The sidebar's overflow menu: the one that holds their Settings item. */
   const findMoreMenu = () => {
@@ -759,8 +764,8 @@
   // rendered, visible banner would be a lie the provider is paying for, so the
   // viewability check below is the only path to it.
   const AD_ID = 'andrey-ad'
-  const ADS_NEXT_URL = 'http://127.0.0.1:39147/ads/next'
-  const ADS_IMPRESSION_URL = 'http://127.0.0.1:39147/ads/impression'
+  const ADS_NEXT_URL = `${API_BASE}/ads/next`
+  const ADS_IMPRESSION_URL = `${API_BASE}/ads/impression`
 
   let currentAd = null
   const reportedAds = new Set()
@@ -899,10 +904,15 @@
   }
 
   document.addEventListener('keydown', (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'd') {
+    // Match the physical key, not just the letter: Ctrl+Shift is the Russian
+    // layout switch, so on that layout `event.key` arrives as 'в' and the
+    // shortcut looked dead. `event.code` stays 'KeyD' in every layout.
+    const key = String(event.key ?? '').toLowerCase()
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && (key === 'd' || event.code === 'KeyD')) {
       event.preventDefault()
       event.stopPropagation()
       if (window.AndreyDesign) window.AndreyDesign.toggle()
+      else console.warn('[andrey] design shortcut pressed, but AndreyDesign is not loaded')
     }
   }, true)
 
@@ -1153,13 +1163,9 @@
     if (event.key === 'Escape') closeHandoffMenu()
   }, true)
 
-  document.addEventListener('keydown', (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'd') {
-      event.preventDefault()
-      event.stopPropagation()
-      if (window.AndreyDesign) window.AndreyDesign.toggle()
-    }
-  }, true)
+  // Ctrl+Shift+D is registered once, above, next to the design menu wiring.
+  // A second copy here made one press toggle twice — stopPropagation() does not
+  // stop the other listener on the same document.
 
   const badgePlaced = placeBadge()
   const limitsPlaced = placeLimits()

@@ -144,12 +144,9 @@ function dataRoot() {
 }
 
 function log(level, message, extra) {
-  try {
-    fs.appendFileSync(path.join(dataRoot(), 'freebuff-route.log'),
-      `${JSON.stringify({ ts: new Date().toISOString(), level, message, ...extra })}\n`)
-  } catch {
-    /* logging must never break the route */
-  }
+  const { appendLog } = require('./route-log.cjs')
+  appendLog(path.join(dataRoot(), 'freebuff-route.log'),
+    JSON.stringify({ ts: new Date().toISOString(), level, message, ...extra }))
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -203,15 +200,41 @@ function flatScreen(screen) {
  * CLI the user runs manually in that same project would be killed too; the pty
  * cleanup still disposes our own child either way.
  */
-function killCli(cwd) {
-  if (typeof cwd !== 'string' || cwd === '') return
-  const filter = `Get-CimInstance Win32_Process -Filter "Name='freebuff.exe'" `
-    + `| Where-Object { $_.CommandLine -like '*${cwd.replace(/'/g, "''")}*' } `
-    + `| ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
-  execFile('powershell', ['-NoProfile', '-Command', filter], { windowsHide: true }, (error) => {
-    if (error) log('error', 'freebuff:kill-failed', { cwd, message: String(error.message ?? error) })
-  })
+function makeKillCli(execFileImpl) {
+  /**
+   * @returns {Promise<void>} settles once the CLI may no longer hold its lock.
+   *
+   * The account queue hands the slot to the next request when the run resolves,
+   * and a new CLI that starts while the old one is still dying sees a live peer
+   * lock and stalls on "holding queued messages". So the run must resolve after
+   * this kill, not when it is merely started.
+   */
+  return function killCli(cwd) {
+    if (typeof cwd !== 'string' || cwd === '') return Promise.resolve()
+    const filter = `Get-CimInstance Win32_Process -Filter "Name='freebuff.exe'" `
+      + `| Where-Object { $_.CommandLine -like '*${cwd.replace(/'/g, "''")}*' } `
+      + `| ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
+    return new Promise((resolve) => {
+      let settled = false
+      const done = (error) => {
+        if (settled) return
+        settled = true
+        if (error) log('error', 'freebuff:kill-failed', { cwd, message: String(error.message ?? error) })
+        resolve()
+      }
+      try {
+        execFileImpl('powershell', ['-NoProfile', '-Command', filter], { windowsHide: true }, done)
+      } catch (error) {
+        done(error)
+      }
+      // A wedged PowerShell must not hold the account's slot forever; the next
+      // run prunes whatever lock the unkilled process left behind.
+      setTimeout(() => done(new Error('killCli timed out')), 10_000).unref()
+    })
+  }
 }
+
+const killCli = makeKillCli(execFile)
 
 /**
  * Wait until the TUI accepts slash commands.
@@ -794,7 +817,7 @@ async function runFreebuff({ prompt, model, timeoutMs = RUN_TIMEOUT_MS, onReady,
     return { text: chosen, raw: latest.text, partial: true, reason: 'timeout', cwd, chatId, accountId }
   } finally {
     try { session.dispose() } catch { /* already gone */ }
-    killCli(cwd)
+    await killCli(cwd)
   }
 }
 
@@ -874,13 +897,41 @@ function readBody(req, limit = 8 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = []
     let size = 0
-    req.on('data', (chunk) => {
+    let settled = false
+
+    function cleanup() {
+      req.off('data', onData)
+      req.off('end', onEnd)
+      req.off('error', onError)
+      req.off('aborted', onAbort)
+      req.off('close', onAbort)
+    }
+    function finish(fn, value) {
+      if (settled) return
+      settled = true
+      cleanup()
+      fn(value)
+    }
+    function onData(chunk) {
       size += chunk.length
-      if (size > limit) { reject(new Error('payload too large')); req.destroy(); return }
+      if (size > limit) {
+        finish(reject, new Error('payload too large'))
+        req.destroy()
+        return
+      }
       chunks.push(chunk)
-    })
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
-    req.on('error', reject)
+    }
+    const onEnd = () => finish(resolve, Buffer.concat(chunks).toString('utf8'))
+    const onError = (error) => finish(reject, error)
+    // A client that vanishes mid-body leaves no 'end'; without this the
+    // handler waits on a socket that will never speak again.
+    const onAbort = () => finish(reject, new Error('client disconnected before the body arrived'))
+
+    req.on('data', onData)
+    req.on('end', onEnd)
+    req.on('error', onError)
+    req.on('aborted', onAbort)
+    req.on('close', onAbort)
   })
 }
 
@@ -912,12 +963,28 @@ function createAccountQueue() {
       } else {
         onQueued?.(state.waiters.length + 1)
         await new Promise((resolve, reject) => {
-          const waiter = { resolve: () => { clearTimeout(timer); resolve() }, reject }
-          const timer = timeoutMs > 0 ? setTimeout(() => {
+          // The waiter used to learn about a disconnect only after being woken, so
+          // a closed tab held this place for the whole queue timeout. Poll the
+          // same signal the run itself uses.
+          const dropSelf = () => {
             const at = state.waiters.indexOf(waiter)
             if (at >= 0) state.waiters.splice(at, 1)
-            reject(new Error('freebuff queue timed out'))
-          }, timeoutMs) : null
+          }
+          const stop = () => {
+            clearTimeout(timer)
+            if (poll !== null) clearInterval(poll)
+          }
+          const waiter = {
+            resolve: () => { stop(); resolve() },
+            reject: (error) => { stop(); dropSelf(); reject(error) },
+          }
+          const timer = timeoutMs > 0 ? setTimeout(() => waiter.reject(new Error('freebuff queue timed out')), timeoutMs) : null
+          const poll = typeof isAborted === 'function'
+            ? setInterval(() => {
+              if (isAborted() === true) waiter.reject(new Error('client disconnected'))
+            }, 250)
+            : null
+          poll?.unref?.()
           state.waiters.push(waiter)
         })
       }
@@ -1728,7 +1795,7 @@ function start(options = {}) {
       server.listen(port, '127.0.0.1', () => {
         activePort = server.address().port
         log('info', 'freebuff:listening', { port })
-        resolve({ port, close: () => session_close(server) })
+        resolve({ port, base: `http://127.0.0.1:${port}`, close: () => session_close(server) })
       })
     }
     listen(wanted, 10)
@@ -1739,4 +1806,4 @@ function session_close(server) {
   server.close()
 }
 
-module.exports = { start, listModels, messagesToPrompt, sanitizeForPaste, PORT }
+module.exports = { start, listModels, messagesToPrompt, sanitizeForPaste, makeKillCli, readBody, createAccountQueue, PORT }

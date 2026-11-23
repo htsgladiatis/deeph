@@ -22,7 +22,31 @@ const BASE_URL = 'https://api.freepi.ai/v1'
 const LOCAL_BASE_URL = 'http://127.0.0.1:39147/freepi/v1'
 const CLIENT_VERSION = '0.6.21'
 const CONTEXT_WINDOW = 200000
-const MAX_TOKENS = 8192
+/**
+ * Answer budget every freePi model gets. It is also the output reservation the
+ * harness compaction formula subtracts from the window (`compaction-profile.cjs`),
+ * so it cannot be tiny: 8192 made thinking models spend the budget on reasoning
+ * and come back empty. 32k keeps a long reasoning pass and still leaves ~166k of
+ * a 200k window for the prompt.
+ */
+const MAX_TOKENS = 32768
+
+/**
+ * Screenshot budget per request.
+ *
+ * freePi answers `413 context_too_long` on a request that carries several
+ * screenshots even when the text side is only ~50k tokens: every image in the
+ * history is re-encoded into every body, and their side counts them far above
+ * our reference-only estimate. The adapter's defaults (50 images, 20MiB, 1MiB
+ * each) never trigger, so the provider refuses instead. Keeping the newest four
+ * at ~1MP / 400KB keeps the body small; older occurrences are replaced with a
+ * text note by `@deepseek-ai/dsh-compaction-image-offload`, which reacts to the
+ * adapter's IMAGE_OFFLOAD_REQUIRED and retries the request.
+ */
+const REQUEST_MAX_IMAGES = 4
+const REQUEST_IMAGE_PIXEL_BUDGET = 1024 * 1024
+const REQUEST_IMAGE_MAX_BYTES = 400 * 1024
+const REQUEST_MAX_IMAGE_BYTES = 4 * 1024 * 1024
 const FALLBACK_MODELS = [{ id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4.1 Flash' }]
 
 /**
@@ -88,6 +112,10 @@ function buildProvider({ catalog, previous }) {
     api: 'openai-completions',
     baseURL: LOCAL_BASE_URL,
     apiKeyEnv: 'FREEPI_LOCAL_KEY',
+    maxRequestImages: REQUEST_MAX_IMAGES,
+    maxRequestImageBytes: REQUEST_MAX_IMAGE_BYTES,
+    requestImagePixelBudget: REQUEST_IMAGE_PIXEL_BUDGET,
+    requestImageMaxBytes: REQUEST_IMAGE_MAX_BYTES,
     models: catalog ? toModels(catalog) : (previous?.models ?? FALLBACK_MODELS),
   }
 }
@@ -144,6 +172,7 @@ async function applyActivePiAccount({ store, profilePath, fetchImpl = fetch, log
 module.exports = {
   applyActivePiAccount,
   applyActivePiAccountSync,
+  MAX_TOKENS,
   fetchCatalog,
   runtimeRequire,
   toModels,

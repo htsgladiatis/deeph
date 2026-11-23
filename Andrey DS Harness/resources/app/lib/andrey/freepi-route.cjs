@@ -159,8 +159,23 @@ function handleChat(req, res, { dataRoot, log }) {
         originalTokens: compressed.originalTokens,
         finalTokens: compressed.finalTokens,
         removed: compressed.removed,
+        imagesDropped: compressed.imagesDropped ?? 0,
+        bytesAfter: compressed.bytesAfter ?? buffer.length,
       })
     }
+
+    // What the route is about to send, for matching a provider refusal against
+    // the harness's own context counter. The provider's prompt count arrives in
+    // the session's usage record; this line is the other half of the pair.
+    log('info', 'freepi:request-metrics', {
+      model: compressed.model ?? null,
+      maxTokens: compressed.maxTokens ?? null,
+      messages: compressed.messageCount ?? null,
+      bytes: buffer.length,
+      estimatedTokens: compressed.finalTokens || compressed.originalTokens || 0,
+      imagesDropped: compressed.imagesDropped ?? 0,
+      compressed: compressed.changed,
+    })
 
     const { account, token } = tokenFor(dataRoot)
     if (!token) {
@@ -235,6 +250,16 @@ function handleChat(req, res, { dataRoot, log }) {
         await sleep(1500)
         continue
       }
+
+      log('error', 'freepi:upstream-error', {
+        status: upstream.status,
+        code,
+        model: compressed.model ?? null,
+        maxTokens: compressed.maxTokens ?? null,
+        estimatedTokens: compressed.finalTokens || compressed.originalTokens || 0,
+        bytes: buffer.length,
+        upstream: text.slice(0, 1000),
+      })
 
       res.writeHead(upstream.status, {
         'content-type': upstream.headers.get('content-type') ?? 'application/json',

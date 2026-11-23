@@ -55,6 +55,17 @@ try {
   /* boot continues on the profile as it is */
 }
 
+// The bundled compaction backend condenses a 200k window at ~126k; freePi
+// models are 200k, so the fork moves its trigger to 190k. Same best-effort rule.
+try {
+  const { applyCompactionProfileSync } = require('./compaction-profile.cjs')
+  applyCompactionProfileSync({
+    profilePath: path.join(process.env.DSH_HOME, 'profiles', 'desktop', 'cordis.patch.yml'),
+  })
+} catch {
+  /* boot continues on the profile as it is */
+}
+
 // The route is optional: a missing CLI or a busy port must never keep the host
 // from booting. Failures land in freebuff-route.log.
 //
@@ -65,19 +76,47 @@ if (!process.env.FREEBUFF_LOCAL_KEY) process.env.FREEBUFF_LOCAL_KEY = 'freebuff-
 // freePi now goes through its own loopback route too: the token is resolved per
 // request, so only the credential-ref placeholder has to exist.
 if (!process.env.FREEPI_LOCAL_KEY) process.env.FREEPI_LOCAL_KEY = 'freepi-local'
+let route = null
 if (!process.env.ANDREY_FREEBUFF_ROUTE_DISABLED) {
   try {
-    require('./freebuff-route.cjs').start({ dataRoot: root }).catch(() => {})
+    route = require('./freebuff-route.cjs').start({ dataRoot: root }).catch(() => null)
   } catch {
     /* the host boots without the route */
+  }
+}
+
+// The local llama.cpp server behind the `local-lmstudio` provider route shares
+// the host's lifetime: boot starts it, quit kills it. Closing the harness must
+// never leave a multi-gigabyte model server running in the background.
+let llama = null
+if (!process.env.ANDREY_LOCAL_LLAMA_DISABLED) {
+  try {
+    llama = require('./local-llama.cjs')
+    llama.start((message) => console.log(message))
+    const shutdown = () => llama.stop((message) => console.log(message))
+    app.on('before-quit', shutdown)
+    app.on('will-quit', shutdown)
+  } catch {
+    /* the host boots without the local model route */
   }
 }
 
 module.exports = import('../main.js').then((main) => {
   // Their UI owns the windows; we only attach to whatever it creates. A failure
   // here costs a caption, never the app.
+  //
+  // The renderer's URLs follow the port the route actually bound: when 39147 is
+  // taken the route moves to 39148, and a renderer locked to the default would
+  // silently lose limits, accounts, ads and the design canvas.
   try {
-    require('./ui-inject.cjs').install(app)
+    const inject = require('./ui-inject.cjs')
+    if (route !== null) {
+      route
+        .then((started) => inject.install(app, { apiBase: started?.base }))
+        .catch(() => inject.install(app))
+    } else {
+      inject.install(app)
+    }
   } catch {
     /* the host runs without our additions */
   }

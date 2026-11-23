@@ -2,7 +2,7 @@
   'use strict'
 
   const NS = root.AndreyDesign || (root.AndreyDesign = {})
-  const API = 'http://127.0.0.1:39147'
+  const API = root.__ANDREY_API_BASE__ || 'http://127.0.0.1:39147'
   const ROOT_ID = 'andrey-design-root'
   const TOOLS = [
     ['select', 'V', 'Выделение'],
