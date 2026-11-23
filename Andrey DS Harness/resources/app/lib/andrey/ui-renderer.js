@@ -5,7 +5,7 @@
 // that runs once per page load. Everything it adds is marked with `data-andrey`
 // or a known id, is purely additive, and never rewrites their markup.
 ;(() => {
-  const VERSION_LABEL = 'Andrey Version 0.5.5'
+  const VERSION_LABEL = 'Andrey Version 0.5.6'
   const STYLE_ID = 'andrey-extra-style'
   const BADGE_ID = 'andrey-version-badge'
   const LIMITS_ID = 'andrey-limits'

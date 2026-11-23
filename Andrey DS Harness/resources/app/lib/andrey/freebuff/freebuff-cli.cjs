@@ -71,12 +71,19 @@ function binName(platform = process.platform) {
 }
 
 /**
- * Resolution order: FREEBUFF_CLI_ENTRY, the CLI's own config dir (where its
- * launcher unpacks the binary), then PATH. Returns an absolute path or null.
+ * Resolution order: FREEBUFF_CLI_ENTRY, the copy shipped in this fork, the
+ * CLI's own config dir (where its launcher unpacks the binary), then PATH.
+ * A fresh clone therefore needs no separate CLI install. Returns an absolute
+ * path or null.
  */
 function resolveFreebuffBin({ env = process.env, platform = process.platform, userHome } = {}) {
   const override = env.FREEBUFF_CLI_ENTRY
   if (typeof override === 'string' && override && fs.existsSync(override)) return override
+
+  // Pinned CLI shipped with the app: the exact binary the route was verified
+  // against, so a machine with no ~/.config/manicode install still works.
+  const shipped = path.join(__dirname, 'bin', binName(platform))
+  if (fs.existsSync(shipped)) return shipped
 
   const bundled = path.join(cliConfigDir({ userHome: userHome ?? userHomePath({ env }) }), binName(platform))
   if (fs.existsSync(bundled)) return bundled

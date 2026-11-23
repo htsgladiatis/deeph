@@ -85,8 +85,6 @@ if (!process.env.ANDREY_FREEBUFF_ROUTE_DISABLED) {
   }
 }
 
-}
-
 module.exports = import('../main.js').then((main) => {
   // Their UI owns the windows; we only attach to whatever it creates. A failure
   // here costs a caption, never the app.
