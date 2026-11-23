@@ -56,7 +56,7 @@ test('the profile gets the trigger keys and keeps its model policies', () => {
     {
       id: 'compaction-basic',
       config: {
-        modelPolicies: [{ provider: 'local-lmstudio', model: 'huihui-qwen3.5-4b-abliterated', maxTokens: 4096, headroomTokens: 8192 }],
+        modelPolicies: [{ provider: 'freepi', model: 'glm-5.3-flash', maxTokens: 8192, headroomTokens: 8192 }],
       },
     },
   ])

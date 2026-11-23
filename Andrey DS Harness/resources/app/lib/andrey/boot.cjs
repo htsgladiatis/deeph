@@ -85,20 +85,6 @@ if (!process.env.ANDREY_FREEBUFF_ROUTE_DISABLED) {
   }
 }
 
-// The local llama.cpp server behind the `local-lmstudio` provider route shares
-// the host's lifetime: boot starts it, quit kills it. Closing the harness must
-// never leave a multi-gigabyte model server running in the background.
-let llama = null
-if (!process.env.ANDREY_LOCAL_LLAMA_DISABLED) {
-  try {
-    llama = require('./local-llama.cjs')
-    llama.start((message) => console.log(message))
-    const shutdown = () => llama.stop((message) => console.log(message))
-    app.on('before-quit', shutdown)
-    app.on('will-quit', shutdown)
-  } catch {
-    /* the host boots without the local model route */
-  }
 }
 
 module.exports = import('../main.js').then((main) => {
