@@ -61,13 +61,39 @@ function body() {
 }
 
 /**
+ * The pairing token and the extension folder, read from disk on every call.
+ *
+ * The renderer cannot read files and cannot open a WebSocket to loopback, so the
+ * only way for the browser panel to reach the bridge is an HTTP control call with
+ * this token in a header. It is read fresh per page load, so rotating the token
+ * takes effect on the next reload. The folder is only a path to show and copy.
+ */
+function browserGlobals() {
+  const extensionDir = path.join(__dirname, 'browser', 'extension')
+  try {
+    const root = process.env.ANDREY_DATA_ROOT || path.join(process.env.APPDATA || '', 'andrey-ds-harness')
+    const state = JSON.parse(fs.readFileSync(path.join(root, 'browser', 'state.json'), 'utf8'))
+    const token = typeof state.token === 'string' ? state.token : ''
+    return { token, extensionDir }
+  } catch {
+    return { token: '', extensionDir }
+  }
+}
+
+/**
  * @param {{ apiBase?: string }} [options] the route's real base; the route steps
  *   to the next port when 39147 is taken, and the renderer must follow it.
  * @returns the script text.
  */
 function rendererScript(options = {}) {
   const apiBase = typeof options.apiBase === 'string' && options.apiBase !== '' ? options.apiBase : DEFAULT_API_BASE
-  return `window.__ANDREY_API_BASE__ = ${JSON.stringify(apiBase)};\n;\n${body()}`
+  const browser = browserGlobals()
+  const globals = [
+    `window.__ANDREY_API_BASE__ = ${JSON.stringify(apiBase)}`,
+    `window.__ANDREY_BROWSER_TOKEN__ = ${JSON.stringify(browser.token)}`,
+    `window.__ANDREY_BROWSER_EXTENSION_DIR__ = ${JSON.stringify(browser.extensionDir)}`,
+  ].join(';\n')
+  return `${globals};\n;\n${body()}`
 }
 
 /** Attach to one window, now and after every reload. */

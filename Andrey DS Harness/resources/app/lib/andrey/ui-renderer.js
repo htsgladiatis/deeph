@@ -887,6 +887,448 @@
     }, true)
   }
 
+
+  /* ---- Browser agent -------------------------------------------------- */
+  //
+  // The bridge is an MCP server process owned by the host; the renderer reaches
+  // it over POST /control with the shared token, because a dsh-app:// page cannot
+  // open a WebSocket to loopback. Nothing here is needed for a chat to work: if
+  // the bridge is absent the panel says so and the rest of the app is untouched.
+
+  const BROWSER_PORTS = [39160, 39161, 39162, 39163, 39164, 39165, 39166, 39167, 39168, 39169]
+  const BROWSER_PANEL_ID = 'andrey-browser-panel'
+  const BROWSER_STYLE_ID = 'andrey-browser-style'
+  const BROWSER_TOKEN = typeof window.__ANDREY_BROWSER_TOKEN__ === 'string' ? window.__ANDREY_BROWSER_TOKEN__ : ''
+  const BROWSER_EXTENSION_DIR = typeof window.__ANDREY_BROWSER_EXTENSION_DIR__ === 'string' ? window.__ANDREY_BROWSER_EXTENSION_DIR__ : ''
+  let browserOrigin = null
+  let browserTimer = 0
+
+  function browserStyle() {
+    if (document.getElementById(BROWSER_STYLE_ID) !== null) return
+    const style = document.createElement('style')
+    style.id = BROWSER_STYLE_ID
+    style.textContent = [
+      '#' + BROWSER_PANEL_ID + ' { position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.42); }',
+      '#' + BROWSER_PANEL_ID + ' .andrey-browser-card { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; background: var(--dsw-alias-bg-layer-1, #fff); color: var(--dsw-alias-label-primary, #111); border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.12)); border-radius: 14px; box-shadow: 0 24px 64px rgba(0,0,0,0.28); font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }',
+      '#' + BROWSER_PANEL_ID + ' .andrey-browser-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px; border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.08)); }',
+      '#' + BROWSER_PANEL_ID + ' .andrey-browser-title { font-size: 14px; font-weight: 600; }',
+      '#' + BROWSER_PANEL_ID + ' .andrey-browser-sub { font-size: 11px; opacity: 0.65; }',
+      '#' + BROWSER_PANEL_ID + ' .andrey-browser-body { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 12px; }',
+      '#' + BROWSER_PANEL_ID + ' .andrey-browser-block { display: flex; flex-direction: column; gap: 6px; }',
+      '#' + BROWSER_PANEL_ID + ' .andrey-browser-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; opacity: 0.6; }',
+      '#' + BROWSER_PANEL_ID + ' .andrey-browser-code { font: 22px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: 0.24em; }',
+      '#' + BROWSER_PANEL_ID + ' .andrey-browser-path { font: 11px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; word-break: break-all; padding: 6px 8px; border-radius: 8px; background: var(--dsw-alias-bg-layer-3, rgba(0,0,0,0.05)); }',
+      '#' + BROWSER_PANEL_ID + ' ol, #' + BROWSER_PANEL_ID + ' ul { margin: 0; padding-left: 18px; }',
+      '#' + BROWSER_PANEL_ID + ' li { margin: 2px 0; }',
+      '#' + BROWSER_PANEL_ID + ' .andrey-browser-row { display: flex; align-items: center; gap: 8px; }',
+      '#' + BROWSER_PANEL_ID + ' button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.16)); background: transparent; color: inherit; padding: 6px 10px; }',
+      '#' + BROWSER_PANEL_ID + ' button.andrey-primary { background: #2b6cf6; border-color: #2b6cf6; color: #fff; }',
+      '#' + BROWSER_PANEL_ID + ' button.andrey-ghost { border-color: transparent; opacity: 0.7; padding: 4px 6px; }',
+      '#' + BROWSER_PANEL_ID + ' button:disabled { opacity: 0.45; cursor: default; }',
+      '#' + BROWSER_PANEL_ID + ' select { font: inherit; border-radius: 8px; padding: 4px 6px; background: transparent; color: inherit; border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.16)); }',
+      '#' + BROWSER_PANEL_ID + ' .andrey-browser-audit { font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; opacity: 0.8; display: flex; flex-direction: column; gap: 1px; max-height: 150px; overflow: auto; }',
+      '#' + BROWSER_PANEL_ID + ' .andrey-browser-error { color: var(--dsw-alias-state-error-primary, #b91c1c); font-size: 12px; }',
+    ].join('\n')
+    document.head.appendChild(style)
+  }
+
+  function browserNote(text) {
+    const node = document.createElement('div')
+    node.className = 'andrey-browser-sub'
+    node.textContent = text
+    return node
+  }
+
+  async function browserDiscover() {
+    if (browserOrigin !== null) return browserOrigin
+    for (const port of BROWSER_PORTS) {
+      const origin = 'http://127.0.0.1:' + port
+      try {
+        const response = await fetch(origin + '/control/ping', { signal: AbortSignal.timeout(400) })
+        if (!response.ok) continue
+        const data = await response.json()
+        if (data && data.name === 'andrey-browser') {
+          browserOrigin = origin
+          return origin
+        }
+      } catch {
+        /* no bridge on this port */
+      }
+    }
+    return null
+  }
+
+  async function browserControl(action, body) {
+    if (BROWSER_TOKEN === '') throw new Error('нет токена: перезагрузи окно приложения')
+    const origin = await browserDiscover()
+    if (origin === null) throw new Error('мост браузера не запущен: перезапусти приложение')
+    const payload = Object.assign({ action }, body || {})
+    const response = await fetch(origin + '/control', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-bridge-token': BROWSER_TOKEN },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(4000),
+    })
+    if (response.status === 403) {
+      browserOrigin = null
+      throw new Error('токен устарел: перезагрузи окно приложения')
+    }
+    const data = await response.json()
+    if (!response.ok || !data || data.ok !== true) throw new Error((data && data.error) || 'мост отклонил запрос')
+    return data.data
+  }
+
+  function browserCopy(text, button) {
+    const done = () => {
+      const was = button.textContent
+      button.textContent = 'Скопировано'
+      setTimeout(() => { button.textContent = was }, 1200)
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, () => {})
+      return
+    }
+    try {
+      const field = document.createElement('textarea')
+      field.value = text
+      document.body.appendChild(field)
+      field.select()
+      document.execCommand('copy')
+      field.remove()
+      done()
+    } catch {
+      /* clipboard is a convenience */
+    }
+  }
+
+  function browserButton(label, className, onClick) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.textContent = label
+    if (className) button.className = className
+    button.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      onClick(button)
+    })
+    return button
+  }
+
+  function browserRenderBody(body, status) {
+    body.textContent = ''
+    const extension = status && status.extensionStatus ? status.extensionStatus : null
+    const connected = Boolean(status && status.connected)
+
+    const statusLine = browserNote(
+      status === null
+        ? 'мост недоступен'
+        : connected
+          ? 'расширение подключено, вкладок у агента: ' + (Array.isArray(status.extensionStatus && status.extensionStatus.ownedTabs) ? status.extensionStatus.ownedTabs.length : 0)
+          : 'расширение не подключено',
+    )
+    body.appendChild(statusLine)
+
+    if (status === null) {
+      body.appendChild(browserNote('Приложение не смогло ответить на локальный запрос. Перезапусти Andrey DS Harness и открой это окно снова.'))
+      return
+    }
+
+    if (!connected) {
+      const steps = document.createElement('div')
+      steps.className = 'andrey-browser-block'
+      const label = document.createElement('div')
+      label.className = 'andrey-browser-label'
+      label.textContent = 'Подключение расширения'
+      steps.appendChild(label)
+      const list = document.createElement('ol')
+      for (const text of [
+        'Открой chrome://extensions и включи «Режим разработчика».',
+        'Нажми «Загрузить распакованное расширение» и выбери папку ниже.',
+        'Нажми на иконку расширения: откроется боковая панель.',
+        'Введи в ней шестизначный код, который показан ниже.',
+      ]) {
+        const item = document.createElement('li')
+        item.textContent = text
+        list.appendChild(item)
+      }
+      steps.appendChild(list)
+      if (BROWSER_EXTENSION_DIR !== '') {
+        const path = document.createElement('div')
+        path.className = 'andrey-browser-path'
+        path.textContent = BROWSER_EXTENSION_DIR
+        steps.appendChild(path)
+        steps.appendChild(browserButton('Скопировать путь', '', (button) => browserCopy(BROWSER_EXTENSION_DIR, button)))
+      }
+      body.appendChild(steps)
+
+      const codeBlock = document.createElement('div')
+      codeBlock.className = 'andrey-browser-block'
+      const codeLabel = document.createElement('div')
+      codeLabel.className = 'andrey-browser-label'
+      codeLabel.textContent = 'Код подключения'
+      const code = document.createElement('div')
+      code.className = 'andrey-browser-code'
+      code.textContent = String(status.pairCode || '------')
+      codeBlock.appendChild(codeLabel)
+      codeBlock.appendChild(code)
+      codeBlock.appendChild(browserNote('Код одноразовый: после подключения расширение хранит только токен. Если код потерялся, нажми «Обновить» — он покажется снова.'))
+      body.appendChild(codeBlock)
+      return
+    }
+
+    const actions = document.createElement('div')
+    actions.className = 'andrey-browser-row'
+    actions.appendChild(browserButton(status.paused ? 'Продолжить' : 'Пауза', 'andrey-primary', async () => {
+      try {
+        await browserControl(status.paused ? 'resume' : 'pause', {})
+        await browserRefresh()
+      } catch (error) {
+        browserShowError(String(error.message || error))
+      }
+    }))
+    actions.appendChild(browserButton('Отключить расширение', '', async () => {
+      try {
+        const rotated = await browserControl('rotate-token', {})
+        browserShowInfo('Токен обновлён. В расширении введи новый код: ' + rotated.code)
+        await browserRefresh()
+      } catch (error) {
+        browserShowError(String(error.message || error))
+      }
+    }))
+    body.appendChild(actions)
+
+    const tabs = status.extensionStatus && Array.isArray(status.extensionStatus.ownedTabs) ? status.extensionStatus.ownedTabs : []
+    if (tabs.length > 0) {
+      const block = document.createElement('div')
+      block.className = 'andrey-browser-block'
+      const label = document.createElement('div')
+      label.className = 'andrey-browser-label'
+      label.textContent = 'Вкладки агента'
+      block.appendChild(label)
+      const list = document.createElement('ul')
+      for (const tabId of tabs) {
+        const item = document.createElement('li')
+        item.textContent = 'Вкладка ' + tabId
+        list.appendChild(item)
+      }
+      block.appendChild(list)
+      body.appendChild(block)
+    }
+
+    const permissions = Array.isArray(status.permissions) ? status.permissions : []
+    const permBlock = document.createElement('div')
+    permBlock.className = 'andrey-browser-block'
+    const permLabel = document.createElement('div')
+    permLabel.className = 'andrey-browser-label'
+    permLabel.textContent = 'Сайты: спрашивать, разрешать, блокировать'
+    permBlock.appendChild(permLabel)
+    if (permissions.length === 0) {
+      permBlock.appendChild(browserNote('Пока ни одного правила. Обычные действия выполняются сразу, важные — с подтверждением в расширении.'))
+    } else {
+      for (const row of permissions) {
+        const line = document.createElement('div')
+        line.className = 'andrey-browser-row'
+        const origin = document.createElement('span')
+        origin.style.flex = '1'
+        origin.style.overflow = 'hidden'
+        origin.style.textOverflow = 'ellipsis'
+        origin.textContent = String(row.origin || '')
+        const select = document.createElement('select')
+        for (const mode of ['ask', 'allow', 'block']) {
+          const option = document.createElement('option')
+          option.value = mode
+          option.textContent = mode === 'ask' ? 'Спрашивать' : mode === 'allow' ? 'Разрешать' : 'Блокировать'
+          if (row.mode === mode) option.selected = true
+          select.appendChild(option)
+        }
+        select.addEventListener('change', async () => {
+          try {
+            await browserControl('permissions.set', { origin: String(row.origin || ''), mode: select.value })
+            await browserRefresh()
+          } catch (error) {
+            browserShowError(String(error.message || error))
+          }
+        })
+        const remove = browserButton('×', 'andrey-ghost', async () => {
+          try {
+            await browserControl('permissions.clear', { origin: String(row.origin || '') })
+            await browserRefresh()
+          } catch (error) {
+            browserShowError(String(error.message || error))
+          }
+        })
+        line.appendChild(origin)
+        line.appendChild(select)
+        line.appendChild(remove)
+        permBlock.appendChild(line)
+      }
+    }
+    body.appendChild(permBlock)
+
+    const audit = Array.isArray(status.audit) ? status.audit.slice(-14) : []
+    const auditBlock = document.createElement('div')
+    auditBlock.className = 'andrey-browser-block'
+    const auditLabel = document.createElement('div')
+    auditLabel.className = 'andrey-browser-label'
+    auditLabel.textContent = 'Журнал действий'
+    auditBlock.appendChild(auditLabel)
+    if (audit.length === 0) {
+      auditBlock.appendChild(browserNote('Пока пусто.'))
+    } else {
+      const list = document.createElement('div')
+      list.className = 'andrey-browser-audit'
+      for (const row of audit) {
+        const line = document.createElement('div')
+        const time = String(row.ts || '').slice(11, 19)
+        line.textContent = time + '  ' + String(row.method || '') + '  ' + String(row.decision || '') + (row.origin ? '  ' + String(row.origin) : '')
+        list.appendChild(line)
+      }
+      auditBlock.appendChild(list)
+    }
+    body.appendChild(auditBlock)
+  }
+
+  function browserPanelError() {
+    const panel = document.getElementById(BROWSER_PANEL_ID)
+    return panel === null ? null : panel.querySelector('.andrey-browser-error')
+  }
+
+  function browserShowError(text) {
+    const node = browserPanelError()
+    if (node !== null) {
+      node.textContent = text
+      node.style.display = 'block'
+    }
+  }
+
+  function browserShowInfo(text) {
+    const node = browserPanelError()
+    if (node !== null) {
+      node.textContent = text
+      node.style.display = 'block'
+      node.style.color = 'inherit'
+    }
+  }
+
+  async function browserRefresh() {
+    const panel = document.getElementById(BROWSER_PANEL_ID)
+    if (panel === null) return
+    const body = panel.querySelector('.andrey-browser-content')
+    if (body === null) return
+    let status = null
+    try {
+      const raw = await browserControl('status', {})
+      const permissions = await browserControl('permissions.list', {})
+      const audit = await browserControl('audit', { limit: 40 })
+      status = Object.assign({}, raw, { permissions: permissions.permissions, audit: audit.rows })
+    } catch (error) {
+      browserShowError(String(error.message || error))
+    }
+    browserRenderBody(body, status)
+  }
+
+  function browserStopTimer() {
+    if (browserTimer !== 0) {
+      clearInterval(browserTimer)
+      browserTimer = 0
+    }
+  }
+
+  function closeBrowserPanel() {
+    browserStopTimer()
+    const panel = document.getElementById(BROWSER_PANEL_ID)
+    if (panel !== null) panel.remove()
+  }
+
+  function openBrowserPanel() {
+    browserStyle()
+    if (document.getElementById(BROWSER_PANEL_ID) !== null) return
+    const overlay = document.createElement('div')
+    overlay.id = BROWSER_PANEL_ID
+    overlay.addEventListener('pointerdown', (event) => {
+      if (event.target === overlay) closeBrowserPanel()
+    })
+
+    const card = document.createElement('div')
+    card.className = 'andrey-browser-card'
+    const head = document.createElement('div')
+    head.className = 'andrey-browser-head'
+    const titles = document.createElement('div')
+    const title = document.createElement('div')
+    title.className = 'andrey-browser-title'
+    title.textContent = 'Браузер'
+    const sub = document.createElement('div')
+    sub.className = 'andrey-browser-sub'
+    sub.textContent = 'агент работает во вкладках Chrome'
+    titles.appendChild(title)
+    titles.appendChild(sub)
+    head.appendChild(titles)
+    head.appendChild(browserButton('Закрыть', '', closeBrowserPanel))
+
+    const body = document.createElement('div')
+    body.className = 'andrey-browser-body'
+    // The refreshed part is its own node: a full re-render must not wipe the
+    // error line and the footer buttons that live beside it.
+    const content = document.createElement('div')
+    content.className = 'andrey-browser-content'
+    content.style.display = 'flex'
+    content.style.flexDirection = 'column'
+    content.style.gap = '12px'
+    const error = document.createElement('div')
+    error.className = 'andrey-browser-error'
+    error.style.display = 'none'
+
+    const footer = document.createElement('div')
+    footer.className = 'andrey-browser-row'
+    const refresh = browserButton('Обновить', '', () => {
+      void browserRefresh()
+    })
+    footer.appendChild(refresh)
+    body.appendChild(content)
+    body.appendChild(error)
+    body.appendChild(footer)
+
+    card.appendChild(head)
+    card.appendChild(body)
+    overlay.appendChild(card)
+    document.body.appendChild(overlay)
+
+    document.addEventListener('keydown', function onEscape(event) {
+      if (event.key !== 'Escape') return
+      document.removeEventListener('keydown', onEscape, true)
+      closeBrowserPanel()
+    }, true)
+
+    void browserRefresh()
+    browserStopTimer()
+    browserTimer = setInterval(() => {
+      if (document.getElementById(BROWSER_PANEL_ID) === null) {
+        browserStopTimer()
+        return
+      }
+      void browserRefresh()
+    }, 2500)
+  }
+
+  function placeBrowserItem() {
+    if (document.getElementById('andrey-browser-menu-item') !== null) return
+    const menu = findDesignMenu()
+    if (menu === null) return
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.id = 'andrey-browser-menu-item'
+    item.setAttribute('role', 'menuitem')
+    item.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:left'
+    item.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M2 6.2h12" stroke="currentColor" stroke-width="1.3"/><circle cx="4.4" cy="4.7" r="0.7" fill="currentColor"/></svg><span>Браузер</span>'
+    item.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      closeMenus()
+      openBrowserPanel()
+    }, true)
+    menu.appendChild(item)
+  }
+
   /* ---- keep everything attached across their re-renders -------------- */
 
   if (!document.documentElement.dataset.andreyObserver) {
@@ -899,6 +1341,7 @@
       placeAd()
       placeDesignItem()
       placeHandoffItem()
+      placeBrowserItem()
     })
     observer.observe(document.body, { childList: true, subtree: true })
   }
@@ -1171,6 +1614,7 @@
   const limitsPlaced = placeLimits()
   markProviders()
   placeMenuItem()
+  placeBrowserItem()
   // The composer often mounts after this script runs, so the polling is started
   // unconditionally: the plate attaches itself when its dock appears.
   startLimits()

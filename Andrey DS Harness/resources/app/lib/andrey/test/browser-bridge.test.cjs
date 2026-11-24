@@ -198,3 +198,57 @@ test('a new extension replaces the old one', async () => {
     await bridge.stop()
   }
 })
+
+test('the app UI reaches the bridge over control with the shared token', async () => {
+  const { state } = setup()
+  const seen = []
+  const bridge = createBridge({
+    state,
+    onControl: async (action, body) => {
+      seen.push({ action, body })
+      if (action === 'status') return { connected: false }
+      throw Object.assign(new Error('nope'), { status: 400 })
+    },
+  })
+  await bridge.start()
+  const base = 'http://127.0.0.1:' + bridge.port
+  try {
+    const ping = await fetch(base + '/control/ping')
+    assert.equal((await ping.json()).name, 'andrey-browser')
+
+    const anonymous = await fetch(base + '/control', { method: 'POST', body: JSON.stringify({ action: 'status' }) })
+    assert.equal(anonymous.status, 403)
+
+    const preflight = await fetch(base + '/control', {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'dsh-app://app',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type, x-bridge-token',
+      },
+    })
+    assert.equal(preflight.status, 204)
+    assert.equal(preflight.headers.get('access-control-allow-origin'), '*')
+
+    const status = await fetch(base + '/control', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-bridge-token': state.token },
+      body: JSON.stringify({ action: 'status' }),
+    })
+    assert.equal(status.status, 200)
+    assert.equal(status.headers.get('access-control-allow-origin'), '*')
+    assert.deepEqual((await status.json()).data, { connected: false })
+
+    const bad = await fetch(base + '/control', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-bridge-token': state.token },
+      body: JSON.stringify({ action: 'permissions.set', origin: 'https://a.test', mode: 'allow' }),
+    })
+    assert.equal(bad.status, 400)
+    assert.equal((await bad.json()).ok, false)
+    assert.deepEqual(seen.map((row) => row.action), ['status', 'permissions.set'])
+  } finally {
+    await bridge.stop()
+  }
+})
+

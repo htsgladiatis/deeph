@@ -359,6 +359,12 @@ chrome.runtime.onConnect.addListener((port) => {
         chrome.action.setBadgeText({ text: '' }).catch(() => {})
       }
     }
+    if (message.type === 'focus-tab') {
+      void dispatch('tabs.focus', { tabId: message.tabId }).then(postStatus, () => {})
+    }
+    if (message.type === 'open-tab') {
+      void dispatch('tabs.open', {}).then(postStatus, () => {})
+    }
     if (message.type === 'resume') {
       state.paused = false
       void persist({ paused: false })

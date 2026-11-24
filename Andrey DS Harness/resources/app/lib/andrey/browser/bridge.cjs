@@ -51,6 +51,7 @@ function createBridge({
   port = 39160,
   host = '127.0.0.1',
   requireWs = () => runtimeRequire('ws'),
+  onControl = null,
 }) {
   const WebSocketServer = requireWs().WebSocketServer
 
@@ -225,7 +226,60 @@ function createBridge({
   }
 
   async function start() {
+    // The app's own UI reaches the bridge through this endpoint: it is the
+    // process that holds the state, and the renderer runs on a dsh-app:// origin
+    // that cannot speak WebSocket to loopback. The shared token is the only
+    // credential, and a browser will not attach a custom header cross-site.
+    const cors = {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'POST, OPTIONS',
+      'access-control-allow-headers': 'content-type, x-bridge-token',
+      'access-control-max-age': '600',
+    }
     server = http.createServer((req, res) => {
+      if (req.url && req.url.startsWith('/control') && req.method === 'OPTIONS') {
+        res.writeHead(204, cors)
+        res.end()
+        return
+      }
+      // Port discovery for the app UI: cheap, unauthenticated, and leaks nothing
+      // beyond "a bridge is listening here".
+      if (req.url && req.url === '/control/ping' && req.method === 'GET') {
+        res.writeHead(200, { 'content-type': 'application/json', ...cors })
+        res.end(JSON.stringify({ ok: true, name: 'andrey-browser' }))
+        return
+      }
+      if (req.method === 'POST' && req.url && req.url.startsWith('/control')) {
+        if (!onControl || !safeEqual(req.headers['x-bridge-token'] || '', state.token)) {
+          res.writeHead(403, { 'content-type': 'application/json', ...cors })
+          res.end(JSON.stringify({ ok: false, error: 'forbidden' }))
+          return
+        }
+        const chunks = []
+        req.on('data', (chunk) => {
+          chunks.push(chunk)
+          if (Buffer.concat(chunks).length > 65536) req.destroy()
+        })
+        req.on('end', async () => {
+          let body = {}
+          try {
+            body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+          } catch {
+            res.writeHead(400, { 'content-type': 'application/json', ...cors })
+            res.end(JSON.stringify({ ok: false, error: 'bad-json' }))
+            return
+          }
+          try {
+            const data = await onControl(String(body.action || ''), body)
+            res.writeHead(200, { 'content-type': 'application/json', ...cors })
+            res.end(JSON.stringify({ ok: true, data }))
+          } catch (error) {
+            res.writeHead(error?.status || 500, { 'content-type': 'application/json', ...cors })
+            res.end(JSON.stringify({ ok: false, error: String(error?.message || error) }))
+          }
+        })
+        return
+      }
       res.writeHead(404, { 'content-type': 'text/plain' })
       res.end('not found')
     })
