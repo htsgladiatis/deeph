@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Andrey DS Harness — Browser",
+  "version": "0.1.0",
+  "description": "Gives the Andrey DS Harness agent a tab in your own Chrome, without taking over the rest of the browser.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "tabGroups",
+    "storage",
+    "scripting",
+    "alarms",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Andrey Browser"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  },
+  "icons": {}
+}

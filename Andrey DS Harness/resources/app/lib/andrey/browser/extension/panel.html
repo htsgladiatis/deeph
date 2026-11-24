@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Andrey Browser</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <header class="head">
+      <div class="brand">
+        <span class="dot" id="dot"></span>
+        <div>
+          <div class="title">Браузер</div>
+          <div class="sub" id="status-line">не подключён</div>
+        </div>
+      </div>
+      <span class="ver" id="version"></span>
+    </header>
+
+    <main>
+      <section id="pair" class="card hidden">
+        <h2>Подключить к приложению</h2>
+        <p class="muted">
+          Открой <b>Andrey DS Harness</b> → меню «Ещё» → «Браузер» и введи шестизначный код оттуда. Код одноразовый:
+          после подключения расширение хранит только токен.
+        </p>
+        <div class="row">
+          <input id="code" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code" />
+          <button id="pair-btn" class="primary">Подключить</button>
+        </div>
+        <p class="error hidden" id="pair-error"></p>
+      </section>
+
+      <section id="confirm" class="card warn hidden">
+        <h2>Нужно подтверждение</h2>
+        <p id="confirm-summary" class="summary"></p>
+        <p class="muted" id="confirm-origin"></p>
+        <div class="row">
+          <button id="deny-btn" class="secondary">Запретить</button>
+          <button id="allow-btn" class="primary">Разрешить</button>
+        </div>
+      </section>
+
+      <section id="connected" class="hidden">
+        <div class="card">
+          <h2>Вкладки агента</h2>
+          <ul id="tabs" class="tabs"></ul>
+          <div class="row">
+            <button id="open-btn" class="primary">Открыть вкладку</button>
+            <button id="pause-btn" class="secondary">Пауза</button>
+          </div>
+          <p class="muted">
+            Агент видит только вкладки в группе «Andrey Agent». Остальные вкладки, пароли и куки ему недоступны.
+          </p>
+        </div>
+
+        <div class="card">
+          <h2>Сайты</h2>
+          <p class="muted" id="perm-line">Подтверждения по умолчанию: важные действия спрашиваются, обычные — нет.</p>
+          <p class="muted">
+            Разрешения задаются в приложении: «Ещё» → «Браузер» → «Сайты». Заблокированный сайт агент не тронет.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <script src="panel.js"></script>
+  </body>
+</html>
