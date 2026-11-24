@@ -66,6 +66,20 @@ try {
   /* boot continues on the profile as it is */
 }
 
+// The in-browser agent is an MCP server the host mounts as `browser`. Its entry
+// has to be in the profile before the host reads plugins, and every boot rewrites
+// the file from the host's own state, so this runs here rather than at install.
+try {
+  const { applyBrowserProfileSync } = require('./browser-profile.cjs')
+  applyBrowserProfileSync({
+    profilePath: path.join(process.env.DSH_HOME, 'profiles', 'desktop', 'cordis.patch.yml'),
+    mcpServerPath: path.join(__dirname, 'browser', 'mcp-server.cjs'),
+    dataRoot: root,
+  })
+} catch {
+  /* boot continues on the profile as it is */
+}
+
 // The route is optional: a missing CLI or a busy port must never keep the host
 // from booting. Failures land in freebuff-route.log.
 //
