@@ -381,6 +381,9 @@ chrome.runtime.onConnect.addListener((port) => {
     if (message.type === 'pause') {
       state.paused = true
       void persist({ paused: true })
+      // The app side has to know, or its panel keeps offering an action that
+      // the tools would refuse.
+      send({ type: 'event', event: 'paused' })
       void detachAll()
       postStatus()
     }

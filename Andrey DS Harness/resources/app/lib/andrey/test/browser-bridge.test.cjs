@@ -255,6 +255,39 @@ test('the app resume clears the pause on both sides', async () => {
   }
 })
 
+test('the app pause reaches the extension as a stop', async () => {
+  const { state } = setup()
+  const bridge = createBridge({ state })
+  await bridge.start()
+  try {
+    const { ws } = await connect(bridge, { type: 'hello', token: state.token })
+    const announced = new Promise((resolve) => ws.once('message', (raw) => resolve(JSON.parse(String(raw)))))
+    assert.deepEqual(bridge.pause(), { paused: true })
+    assert.equal((await announced).event, 'stop')
+    assert.equal(state.paused.get(), true)
+    ws.close()
+  } finally {
+    await bridge.stop()
+  }
+})
+
+test('a pause from the side panel pauses the app side too', async () => {
+  const { state } = setup()
+  const bridge = createBridge({ state })
+  await bridge.start()
+  try {
+    const { ws } = await connect(bridge, { type: 'hello', token: state.token })
+    ws.send(JSON.stringify({ type: 'event', event: 'paused' }))
+    for (let attempt = 0; attempt < 40 && !state.paused.get(); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    assert.equal(state.paused.get(), true)
+    ws.close()
+  } finally {
+    await bridge.stop()
+  }
+})
+
 test('a resume from the side panel clears the pause here too', async () => {
   const { state } = setup()
   const bridge = createBridge({ state })

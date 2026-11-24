@@ -64,8 +64,7 @@ async function createRuntime({ dir, logger = stderrLogger() } = {}) {
         state.clearPermission(String(body.origin || ''))
         return { ok: true }
       case 'pause':
-        state.paused.set(true)
-        return { paused: true }
+        return bridge.pause()
       case 'resume':
         return bridge.resume()
       case 'rotate-token':

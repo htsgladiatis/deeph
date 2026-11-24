@@ -168,11 +168,7 @@ function createBridge({
     const checked = validateParams(method, params)
     if (!checked.ok) throw bridgeError(checked.error.code, checked.error.message)
 
-    if (method === 'agent.stop') {
-      state.paused.set(true)
-      send(client, { type: 'event', event: 'stop' })
-      return { paused: true }
-    }
+    if (method === 'agent.stop') return pause()
     if (method === 'status') {
       const extensionStatus = client ? await request('status', {}, DIAGNOSTIC_TIMEOUT_MS).catch(() => null) : null
       return { ...status(), extensionStatus }
@@ -224,6 +220,7 @@ function createBridge({
       // resume has to clear this side of the pause too, or the panel shows a
       // running agent while every call still fails with PAUSED.
       if (message.event === 'resumed') state.paused.set(false)
+      if (message.event === 'paused') state.paused.set(true)
       if (message.event === 'confirm.answer' && confirmations.has(message.data?.id)) {
         const waiter = confirmations.get(message.data.id)
         confirmations.delete(message.data.id)
@@ -347,6 +344,13 @@ function createBridge({
     return { paused: false }
   }
 
+  /** Pause on both sides, and make the extension let go of its tabs. */
+  function pause() {
+    state.paused.set(true)
+    send(client, { type: 'event', event: 'stop' })
+    return { paused: true }
+  }
+
   async function stop() {
     for (const waiter of pending.values()) {
       clearTimeout(waiter.timer)
@@ -383,6 +387,7 @@ function createBridge({
     stop,
     call,
     resume,
+    pause,
     status,
     onEvent(listener) {
       listeners.add(listener)
