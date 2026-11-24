@@ -88,7 +88,7 @@ function createBridge({
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         confirmations.delete(id)
-        resolve('timeout')
+        resolve({ decision: 'timeout' })
       }, CONFIRM_TIMEOUT_MS)
       confirmations.set(id, { resolve, timer })
       send(client, { type: 'event', event: 'confirm.request', data: { id, ...summary } })
@@ -106,9 +106,23 @@ function createBridge({
     }
   }
 
+  /** The tab's current URL, for when a describe could not answer. */
+  async function tabUrl(params) {
+    try {
+      const data = await request('tabs.list', {}, DIAGNOSTIC_TIMEOUT_MS)
+      const found = (data?.tabs || []).find((tab) => tab.tabId === params.tabId)
+      return found?.url || ''
+    } catch {
+      return ''
+    }
+  }
+
   async function guardedCall(method, params) {
     const target = TARGETED.has(method) ? await describeTarget(params) : undefined
-    const origin = target?.url || params.url || ''
+    // A stale ref makes the describe fail, and an empty origin would then count
+    // as a new site: the agent would get a confirmation for every click it aimed
+    // at a slightly wrong ref. The tab itself knows where it is, so ask it.
+    const origin = target?.url || params.url || (params.tabId ? await tabUrl(params) : '')
     const permission = origin ? state.getPermission(origin).mode : 'ask'
 
     if (STATE_CHANGING.has(method) && permission === 'block') {
@@ -121,19 +135,22 @@ function createBridge({
 
     if (needsConfirm) {
       const label = target?.name || params.url || params.key || 'action'
-      const decision = await requestConfirmation({
+      const answer = await requestConfirmation({
         summary: method.replace('page.', '') + ': ' + String(label).slice(0, 120) + (risk.reasons.length ? ' (' + risk.reasons.join('; ') + ')' : ''),
         origin,
         risk: risk.level,
         reasons: risk.reasons,
         ref: params.ref,
       })
-      if (decision !== 'allow') {
+      if (answer.decision !== 'allow') {
         state.audit({ method, origin, risk: risk.level, decision: 'denied', ref: params.ref })
-        throw bridgeError(
-          ERROR_CODES.NEEDS_CONFIRM,
-          decision === 'timeout' ? 'the confirmation timed out; the action was not performed' : 'the user denied this action',
-        )
+        const why =
+          answer.decision === 'timeout'
+            ? 'the confirmation timed out; the action was not performed'
+            : answer.reason === 'panel-closed'
+              ? 'the side panel of the extension is closed, so the confirmation could not be shown; open it and repeat the action'
+              : 'the user denied this action'
+        throw bridgeError(ERROR_CODES.NEEDS_CONFIRM, why)
       }
       state.audit({ method, origin, risk: risk.level, decision: 'confirmed', ref: params.ref })
     } else {
@@ -203,11 +220,15 @@ function createBridge({
     }
 
     if (message.type === 'event') {
+      // The side panel is a second place the user can press "continue". Its
+      // resume has to clear this side of the pause too, or the panel shows a
+      // running agent while every call still fails with PAUSED.
+      if (message.event === 'resumed') state.paused.set(false)
       if (message.event === 'confirm.answer' && confirmations.has(message.data?.id)) {
         const waiter = confirmations.get(message.data.id)
         confirmations.delete(message.data.id)
         clearTimeout(waiter.timer)
-        waiter.resolve(message.data.allow ? 'allow' : 'deny')
+        waiter.resolve({ decision: message.data.allow ? 'allow' : 'deny', reason: message.data.reason || '' })
         return
       }
       for (const listener of listeners) {
@@ -319,6 +340,13 @@ function createBridge({
     return { port: boundPort }
   }
 
+  /** Resume on both sides: this process and the browser extension. */
+  function resume() {
+    state.paused.set(false)
+    send(client, { type: 'event', event: 'resume' })
+    return { paused: false }
+  }
+
   async function stop() {
     for (const waiter of pending.values()) {
       clearTimeout(waiter.timer)
@@ -327,7 +355,7 @@ function createBridge({
     pending.clear()
     for (const waiter of confirmations.values()) {
       clearTimeout(waiter.timer)
-      waiter.resolve('deny')
+      waiter.resolve({ decision: 'deny', reason: 'bridge-stopped' })
     }
     confirmations.clear()
     if (client) client.close(1001)
@@ -354,6 +382,7 @@ function createBridge({
     start,
     stop,
     call,
+    resume,
     status,
     onEvent(listener) {
       listeners.add(listener)

@@ -194,7 +194,7 @@ function onBridgeMessage(event) {
       }
     }
     if (!delivered) {
-      send({ type: 'event', event: 'confirm.answer', data: { id: message.data.id, allow: false } })
+      send({ type: 'event', event: 'confirm.answer', data: { id: message.data.id, allow: false, reason: 'panel-closed' } })
       state.pendingConfirms.delete(message.data.id)
     } else {
       chrome.action.setBadgeText({ text: '!' }).catch(() => {})
@@ -205,6 +205,12 @@ function onBridgeMessage(event) {
     state.paused = true
     void persist({ paused: true })
     void detachAll()
+    postStatus()
+    return
+  }
+  if (message.type === 'event' && message.event === 'resume') {
+    state.paused = false
+    void persist({ paused: false })
     postStatus()
     return
   }
@@ -368,6 +374,8 @@ chrome.runtime.onConnect.addListener((port) => {
     if (message.type === 'resume') {
       state.paused = false
       void persist({ paused: false })
+      // Tell the app side as well, so the panel and the tools agree.
+      send({ type: 'event', event: 'resumed' })
       postStatus()
     }
     if (message.type === 'pause') {

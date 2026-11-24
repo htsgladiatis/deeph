@@ -67,8 +67,7 @@ async function createRuntime({ dir, logger = stderrLogger() } = {}) {
         state.paused.set(true)
         return { paused: true }
       case 'resume':
-        state.paused.set(false)
-        return { paused: false }
+        return bridge.resume()
       case 'rotate-token':
         return { token: state.rotateToken(), code: state.regeneratePairCode() }
       case 'audit':

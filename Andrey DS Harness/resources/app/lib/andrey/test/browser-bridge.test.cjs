@@ -147,6 +147,57 @@ test('a confirmed high-risk action runs and is audited as confirmed', async () =
   }
 })
 
+test('a stale ref still runs on an allowed site instead of asking', async () => {
+  const { state } = setup()
+  const bridge = createBridge({ state })
+  await bridge.start()
+  try {
+    const { ws } = await connect(bridge, { type: 'hello', token: state.token })
+    const asked = []
+    ws.on('message', (raw) => {
+      const message = JSON.parse(String(raw))
+      if (message.type === 'req' && message.method === 'page.describe') {
+        ws.send(JSON.stringify({ type: 'res', id: message.id, ok: false, error: { code: 'NO_SUCH_REF', message: 'stale ref' } }))
+      }
+      if (message.type === 'req' && message.method === 'tabs.list') {
+        answer(ws, message.id, { tabs: [{ tabId: 7, url: 'https://example.com/page' }], currentTabId: 7 })
+      }
+      if (message.type === 'req' && message.method === 'page.click') {
+        answer(ws, message.id, { clicked: { ref: '1' } })
+      }
+      if (message.type === 'event' && message.event === 'confirm.request') asked.push(message.data)
+    })
+    const data = await bridge.call('page.click', { tabId: 7, ref: '1' }, { timeoutMs: 5000 })
+    assert.equal(data.clicked.ref, '1')
+    assert.equal(asked.length, 0)
+    ws.close()
+  } finally {
+    await bridge.stop()
+  }
+})
+
+test('a confirmation that never reached the panel says so', async () => {
+  const { state } = setup()
+  const bridge = createBridge({ state })
+  await bridge.start()
+  try {
+    const { ws } = await connect(bridge, { type: 'hello', token: state.token })
+    ws.on('message', (raw) => {
+      const message = JSON.parse(String(raw))
+      if (message.type === 'req' && message.method === 'page.describe') {
+        answer(ws, message.id, { url: 'https://example.com', role: 'link', name: 'Learn more', tag: 'a' })
+      }
+      if (message.type === 'event' && message.event === 'confirm.request') {
+        ws.send(JSON.stringify({ type: 'event', event: 'confirm.answer', data: { id: message.data.id, allow: false, reason: 'panel-closed' } }))
+      }
+    })
+    await assert.rejects(bridge.call('page.navigate', { url: 'mailto:a@b.test' }, { timeoutMs: 5000 }), (error) => /side panel/.test(error.message))
+    ws.close()
+  } finally {
+    await bridge.stop()
+  }
+})
+
 test('a blocked origin is refused and audited', async () => {
   const { state } = setup()
   state.setPermission('https://evil.test', 'block')
@@ -177,6 +228,46 @@ test('paused blocks calls until the user resumes', async () => {
     await assert.rejects(bridge.call('tabs.list', {}), (error) => error.code === 'PAUSED')
     const stopped = await bridge.call('agent.stop', {})
     assert.equal(stopped.paused, true)
+  } finally {
+    await bridge.stop()
+  }
+})
+
+test('the app resume clears the pause on both sides', async () => {
+  const { state } = setup()
+  const bridge = createBridge({ state })
+  await bridge.start()
+  try {
+    const { ws } = await connect(bridge, { type: 'hello', token: state.token })
+    ws.on('message', (raw) => {
+      const message = JSON.parse(String(raw))
+      if (message.type === 'req' && message.method === 'tabs.list') answer(ws, message.id, { tabs: [] })
+    })
+    state.paused.set(true)
+    const announced = new Promise((resolve) => ws.once('message', (raw) => resolve(JSON.parse(String(raw)))))
+    assert.deepEqual(bridge.resume(), { paused: false })
+    assert.equal((await announced).event, 'resume')
+    assert.equal(state.paused.get(), false)
+    assert.deepEqual(await bridge.call('tabs.list', {}), { tabs: [] })
+    ws.close()
+  } finally {
+    await bridge.stop()
+  }
+})
+
+test('a resume from the side panel clears the pause here too', async () => {
+  const { state } = setup()
+  const bridge = createBridge({ state })
+  await bridge.start()
+  try {
+    const { ws } = await connect(bridge, { type: 'hello', token: state.token })
+    state.paused.set(true)
+    ws.send(JSON.stringify({ type: 'event', event: 'resumed' }))
+    for (let attempt = 0; attempt < 40 && state.paused.get(); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    assert.equal(state.paused.get(), false)
+    ws.close()
   } finally {
     await bridge.stop()
   }
