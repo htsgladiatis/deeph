@@ -176,6 +176,35 @@ test('a stale ref still runs on an allowed site instead of asking', async () => 
   }
 })
 
+test('a click without a tab id still runs on the allowed site of the current tab', async () => {
+  const { state } = setup()
+  const bridge = createBridge({ state })
+  await bridge.start()
+  try {
+    const { ws } = await connect(bridge, { type: 'hello', token: state.token })
+    const asked = []
+    ws.on('message', (raw) => {
+      const message = JSON.parse(String(raw))
+      if (message.type === 'req' && message.method === 'page.describe') {
+        ws.send(JSON.stringify({ type: 'res', id: message.id, ok: false, error: { code: 'NO_ELEMENT', message: 'no such element' } }))
+      }
+      if (message.type === 'req' && message.method === 'tabs.list') {
+        answer(ws, message.id, { tabs: [{ tabId: 9, url: 'https://example.com/page' }], currentTabId: 9 })
+      }
+      if (message.type === 'req' && message.method === 'page.click') {
+        answer(ws, message.id, { clicked: { selector: 'h1' } })
+      }
+      if (message.type === 'event' && message.event === 'confirm.request') asked.push(message.data)
+    })
+    const data = await bridge.call('page.click', { selector: 'h1' }, { timeoutMs: 5000 })
+    assert.equal(data.clicked.selector, 'h1')
+    assert.equal(asked.length, 0)
+    ws.close()
+  } finally {
+    await bridge.stop()
+  }
+})
+
 test('a confirmation that never reached the panel says so', async () => {
   const { state } = setup()
   const bridge = createBridge({ state })

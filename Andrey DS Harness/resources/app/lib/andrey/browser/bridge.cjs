@@ -117,12 +117,27 @@ function createBridge({
     }
   }
 
+  /** The tab the extension will use when the caller names none. */
+  async function defaultTab() {
+    try {
+      const data = await request('tabs.list', {}, DIAGNOSTIC_TIMEOUT_MS)
+      const tabs = data?.tabs || []
+      return tabs.find((tab) => tab.tabId === data?.currentTabId) || tabs[0]
+    } catch {
+      return undefined
+    }
+  }
+
   async function guardedCall(method, params) {
     const target = TARGETED.has(method) ? await describeTarget(params) : undefined
     // A stale ref makes the describe fail, and an empty origin would then count
     // as a new site: the agent would get a confirmation for every click it aimed
-    // at a slightly wrong ref. The tab itself knows where it is, so ask it.
-    const origin = target?.url || params.url || (params.tabId ? await tabUrl(params) : '')
+    // at a slightly wrong ref. The tab itself knows where it is, so ask it — and
+    // when the caller named no tab, ask for the one the extension will act on.
+    const origin =
+      target?.url ||
+      params.url ||
+      (params.tabId !== undefined ? await tabUrl(params) : (await defaultTab())?.url || '')
     const permission = origin ? state.getPermission(origin).mode : 'ask'
 
     if (STATE_CHANGING.has(method) && permission === 'block') {
