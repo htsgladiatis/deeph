@@ -22,7 +22,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
-const VERSION_LABEL = 'Andrey Version 0.5.6'
+const VERSION_LABEL = 'Andrey Version 0.5.7'
 const SCRIPT_FILE = path.join(__dirname, 'ui-renderer.js')
 const PET_FILE = path.join(__dirname, 'pet.js')
 const DESIGN_DIR = path.join(__dirname, 'design')
