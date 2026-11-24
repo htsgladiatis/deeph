@@ -15,6 +15,13 @@ const crypto = require('node:crypto')
  */
 
 const MODES = new Set(['ask', 'allow', 'block'])
+/**
+ * The mode a site gets before the user touches the table: full access, by the
+ * product decision that the agent should work on its own. Money-touching sites
+ * and dangerous controls are still stopped by risk.cjs, and one click in the
+ * panel pins any origin to `ask` or `block`.
+ */
+const DEFAULT_MODE = 'allow'
 const MAX_AUDIT_ROWS = 2000
 
 /** Reduce any URL to the origin the permission table stores, or null. */
@@ -101,7 +108,7 @@ function createState(file) {
     getPermission(origin) {
       const key = originOf(origin) || String(origin)
       const mode = data.permissions[key]
-      return { mode: MODES.has(mode) ? mode : 'ask' }
+      return { mode: MODES.has(mode) ? mode : DEFAULT_MODE }
     },
 
     setPermission(origin, mode) {

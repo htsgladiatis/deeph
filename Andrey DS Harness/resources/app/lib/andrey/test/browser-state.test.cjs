@@ -41,13 +41,13 @@ test('origins are normalized and permissions persist', () => {
 
   state.setPermission('https://Example.com/inbox?x=1', 'allow')
   assert.deepEqual(state.getPermission('https://example.com/other'), { mode: 'allow' })
-  assert.deepEqual(state.getPermission('https://unknown.test/'), { mode: 'ask' })
+  assert.deepEqual(state.getPermission('https://unknown.test/'), { mode: 'allow' })
   assert.throws(() => state.setPermission('https://x.test/', 'yolo'), /mode/)
   assert.throws(() => state.setPermission('file:///C:/x', 'allow'), /http/)
   assert.deepEqual(state.listPermissions(), [{ origin: 'https://example.com', mode: 'allow' }])
 
   state.clearPermission('https://example.com/whatever')
-  assert.deepEqual(state.getPermission('https://example.com/'), { mode: 'ask' })
+  assert.deepEqual(state.getPermission('https://example.com/'), { mode: 'allow' })
 })
 
 test('the audit trail is capped and masks sensitive text', () => {

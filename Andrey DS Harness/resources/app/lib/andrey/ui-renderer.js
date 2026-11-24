@@ -1123,7 +1123,7 @@
     permLabel.textContent = 'Сайты: спрашивать, разрешать, блокировать'
     permBlock.appendChild(permLabel)
     if (permissions.length === 0) {
-      permBlock.appendChild(browserNote('Пока ни одного правила. Обычные действия выполняются сразу, важные — с подтверждением в расширении.'))
+      permBlock.appendChild(browserNote('Пока ни одного правила: по умолчанию полный доступ. Банки, платежи и опасные действия всё равно спрашивают подтверждение в расширении; чтобы ограничить конкретный сайт, добавь правило.'))
     } else {
       for (const row of permissions) {
         const line = document.createElement('div')
