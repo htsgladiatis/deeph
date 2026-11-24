@@ -1042,7 +1042,7 @@
       steps.appendChild(label)
       const list = document.createElement('ol')
       for (const text of [
-        'Открой chrome://extensions и включи «Режим разработчика».',
+        'Открой страницу расширений своего браузера (chrome://extensions, brave://extensions, edge://extensions) и включи «Режим разработчика».',
         'Нажми «Загрузить распакованное расширение» и выбери папку ниже.',
         'Нажми на иконку расширения: откроется боковая панель.',
         'Введи в ней шестизначный код, который показан ниже.',
@@ -1259,7 +1259,7 @@
     title.textContent = 'Браузер'
     const sub = document.createElement('div')
     sub.className = 'andrey-browser-sub'
-    sub.textContent = 'агент работает во вкладках Chrome'
+    sub.textContent = 'агент работает во вкладках твоего браузера'
     titles.appendChild(title)
     titles.appendChild(sub)
     head.appendChild(titles)

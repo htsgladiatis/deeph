@@ -121,11 +121,61 @@
     await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base })
   }
 
+  /**
+   * Show the user where the agent is about to act.
+   *
+   * The whole point of driving the real browser is that the person watches the
+   * work; CDP input events move no visible cursor, so a click would otherwise
+   * happen off-screen from their point of view. A frame plus a dot, faded out
+   * after the action, is the cheapest honest answer.
+   */
+  async function flash(tabId, params, verb) {
+    const ref = params && params.ref !== undefined ? String(params.ref) : ''
+    const selector = params && typeof params.selector === 'string' ? params.selector : ''
+    if (ref === '' && selector === '') return
+    const lookup =
+      ref !== ''
+        ? 'var el = (window.__andreyEls || [])[' + (Number(ref) - 1) + '];'
+        : 'var el = document.querySelector(' + JSON.stringify(selector) + ');'
+    const script =
+      '(() => {' +
+      lookup +
+      'if (!el) return false;' +
+      'var r = el.getBoundingClientRect();' +
+      'var name = (el.innerText || el.getAttribute("aria-label") || el.value || el.getAttribute("placeholder") || el.tagName || "").replace(/\s+/g, " ").trim().slice(0, 40);' +
+      'var old = document.getElementById("__andrey_act_box__"); if (old) old.remove();' +
+      'var box = document.createElement("div"); box.id = "__andrey_act_box__";' +
+      'box.style.cssText = "position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #2b6cf6;border-radius:5px;box-shadow:0 0 0 4px rgba(43,108,246,0.18),0 0 18px rgba(43,108,246,0.35);transition:opacity .4s ease;";' +
+      'box.style.left = Math.max(0, r.left - 3) + "px"; box.style.top = Math.max(0, r.top - 3) + "px";' +
+      'box.style.width = (r.width + 6) + "px"; box.style.height = (r.height + 6) + "px";' +
+      'var dot = document.createElement("div");' +
+      'dot.style.cssText = "position:fixed;width:10px;height:10px;border-radius:50%;background:#2b6cf6;box-shadow:0 0 8px rgba(43,108,246,0.6);pointer-events:none;z-index:2147483647;transition:opacity .4s ease;";' +
+      'dot.style.left = (r.left + r.width / 2 - 5) + "px"; dot.style.top = (r.top + r.height / 2 - 5) + "px";' +
+      'var tag = document.createElement("div"); tag.id = "__andrey_act_tag__";' +
+      'tag.textContent = ' + JSON.stringify(verb) + ' + (name ? " · " + name : "");' +
+      'tag.style.cssText = "position:fixed;pointer-events:none;z-index:2147483647;font:11px/1.3 system-ui,sans-serif;background:#2b6cf6;color:#fff;padding:2px 6px;border-radius:5px;opacity:.95;transition:opacity .4s ease;";' +
+      'tag.style.left = Math.max(0, r.left) + "px"; tag.style.top = Math.max(0, r.top - 20) + "px";' +
+      'document.documentElement.appendChild(box); document.documentElement.appendChild(dot); document.documentElement.appendChild(tag);' +
+      'setTimeout(function () {' +
+      '  box.style.opacity = "0"; dot.style.opacity = "0"; tag.style.opacity = "0";' +
+      '  setTimeout(function () { box.remove(); dot.remove(); tag.remove(); }, 450);' +
+      '}, 700);' +
+      'return true;' +
+      '})()'
+    try {
+      await evaluate(tabId, script)
+    } catch {
+      // The frame is a courtesy, never a reason for the action to fail.
+    }
+  }
+
   async function click(tabId, params) {
     const box = await boxOf(tabId, params)
     const button = params.button === 'right' ? 'right' : params.button === 'middle' ? 'middle' : 'left'
     const clickCount = Number(params.clickCount) > 0 ? Math.min(Number(params.clickCount), 3) : 1
     const point = { x: Math.round(box.x), y: Math.round(box.y) }
+    await flash(tabId, params, 'клик')
+    await new Promise((resolve) => setTimeout(resolve, 140))
     await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y, button: 'none' })
     for (let count = 1; count <= clickCount; count += 1) {
       await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button, clickCount: count })
@@ -165,6 +215,7 @@
 
   async function type(tabId, params) {
     const text = String(params.text == null ? '' : params.text)
+    await flash(tabId, params, 'ввод')
     await focusField(tabId, params, Boolean(params.clearFirst))
     if (text !== '') await cdp(tabId, 'Input.insertText', { text })
     if (params.submit) await keyEvent(tabId, 'Enter')
