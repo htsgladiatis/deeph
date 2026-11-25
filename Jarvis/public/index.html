@@ -30,6 +30,7 @@
       <section class="chat-wrap">
         <div class="chat" id="chat" aria-live="polite"></div>
         <div class="heard" id="heard" hidden></div>
+        <div class="mic-meter" id="micMeter" hidden><i id="micMeterFill"></i></div>
         <div class="hint" id="hint">Скажи вслух «Привет, Андрей, …» · Enter — текст · Ctrl+M — микрофон · Esc — стоп</div>
         <button class="mic-gate" id="micGate" type="button" hidden>Нажмите, чтобы включить микрофон и говорить</button>
         <form class="composer" id="composer">
@@ -79,6 +80,10 @@
             <span>Голос</span>
             <select id="voiceSelect"></select>
             <button class="link-btn" type="button" id="testVoice">проверить голос</button>
+          </label>
+          <label class="field">
+            <span>Микрофон</span>
+            <select id="micSelect"></select>
           </label>
           <label class="field-row">
             <input type="checkbox" id="autospeak" checked />

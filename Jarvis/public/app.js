@@ -19,6 +19,7 @@ const state = {
   followUpUntil: 0,
   micStarted: false,
   micBlocked: false,
+  mic: localStorage.getItem("jarvis-mic") || "",
   timer: null,
   voices: [],
   lastReply: "",
@@ -283,6 +284,10 @@ const local = {
   sending: false,
   inflight: 0,
   starting: false,
+  peak: 0,
+  lastLoudAt: 0,
+  quietShown: false,
+  loggedAt: 0,
 }
 
 function localEvents() {
@@ -340,6 +345,63 @@ function toPcm16(samples, rate) {
   return new Uint8Array(pcm.buffer)
 }
 
+function reportQuiet(peak) {
+  if (peak > 0.03) {
+    local.lastLoudAt = Date.now()
+    if (local.quietShown) {
+      local.quietShown = false
+      el("heard").hidden = true
+    }
+    return
+  }
+  if (local.lastLoudAt === 0) local.lastLoudAt = Date.now()
+  if (Date.now() - local.lastLoudAt < 15000 || local.quietShown) return
+  local.quietShown = true
+  console.log("[jarvis] mic too quiet, peak=" + peak.toFixed(3))
+  if (state.recognizing === true && state.speaking !== true) {
+    el("heard").hidden = false
+    el("heard").textContent = "микрофон почти не слышит — выберите другой микрофон в настройках справа"
+  }
+}
+
+function updateMicMeter(peak) {
+  const wrap = el("micMeter")
+  const fill = el("micMeterFill")
+  if (wrap === null || fill === null) return
+  if (state.recognizing !== true) {
+    wrap.hidden = true
+    return
+  }
+  wrap.hidden = false
+  fill.style.width = Math.min(100, Math.round(peak * 260)) + "%"
+  wrap.classList.toggle("loud", peak > 0.55)
+}
+
+async function listMics() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return
+  let devices = []
+  try {
+    devices = await navigator.mediaDevices.enumerateDevices()
+  } catch {
+    return
+  }
+  const inputs = devices.filter((device) => device.kind === "audioinput")
+  const select = el("micSelect")
+  select.innerHTML = ""
+  const auto = document.createElement("option")
+  auto.value = ""
+  auto.textContent = "Системный по умолчанию"
+  select.appendChild(auto)
+  inputs.forEach((device, index) => {
+    const option = document.createElement("option")
+    option.value = device.deviceId
+    option.textContent = device.label || "Микрофон " + (index + 1)
+    select.appendChild(option)
+  })
+  if (state.mic !== "" && inputs.some((device) => device.deviceId === state.mic)) select.value = state.mic
+  console.log("[jarvis] mics: " + inputs.map((device) => device.label || "?").join(" | "))
+}
+
 async function localStart() {
   if (state.engine !== "local" || local.stream !== null || local.starting) return
   local.starting = true
@@ -347,23 +409,54 @@ async function localStart() {
     localEvents()
     const started = await fetch("/api/stt/start", { method: "POST" }).then((res) => res.json())
     if (started.ok !== true) throw new Error(started.error || "нет модели распознавания")
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    })
+    const dsp = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    let stream = null
+    if (state.mic !== "") {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: Object.assign({}, dsp, { deviceId: { exact: state.mic } }) })
+      } catch (error) {
+        console.log("[jarvis] mic choice failed, using default: " + (error.message || error))
+      }
+    }
+    if (stream === null) stream = await navigator.mediaDevices.getUserMedia({ audio: dsp })
     const ctx = new AudioContext({ sampleRate: 16000 })
     await ctx.resume()
     const source = ctx.createMediaStreamSource(stream)
     const processor = ctx.createScriptProcessor(4096, 1, 1)
     const rate = ctx.sampleRate
     processor.onaudioprocess = (event) => {
+      const input = event.inputBuffer.getChannelData(0)
+      let peak = 0
+      for (let index = 0; index < input.length; index += 1) {
+        const abs = Math.abs(input[index])
+        if (abs > peak) peak = abs
+      }
+      local.peak = peak
+      updateMicMeter(peak)
       if (!local.sending || local.inflight > 2) return
-      const pcm = toPcm16(event.inputBuffer.getChannelData(0), rate)
+      reportQuiet(peak)
+      // Тихий микрофон (например, Bluetooth-гарнитура) поднимаем до слышимого уровня.
+      let data = input
+      if (peak > 0 && peak < 0.12) {
+        const gain = Math.min(20, 0.25 / peak)
+        data = new Float32Array(input.length)
+        for (let index = 0; index < input.length; index += 1) data[index] = input[index] * gain
+      } else if (peak > 0.92) {
+        data = new Float32Array(input.length)
+        for (let index = 0; index < input.length; index += 1) data[index] = input[index] * 0.7
+      }
+      const pcm = toPcm16(data, rate)
       local.inflight += 1
       fetch("/api/stt/chunk", { method: "POST", body: pcm })
         .catch(() => {})
         .finally(() => {
           local.inflight -= 1
         })
+      const now = Date.now()
+      if (now - local.loggedAt > 5000) {
+        local.loggedAt = now
+        console.log("[jarvis] mic level=" + peak.toFixed(3))
+      }
     }
     source.connect(processor)
     processor.connect(ctx.destination)
@@ -377,7 +470,9 @@ async function localStart() {
     state.micBlocked = false
     el("micBtn").setAttribute("aria-pressed", "true")
     updateVoiceIndicator()
-    console.log("[jarvis] local mic on, rate=" + rate)
+    const track = stream.getAudioTracks()[0]
+    console.log("[jarvis] local mic on, rate=" + rate + ", device=" + (track && track.label ? track.label : "?"))
+    listMics().catch(() => {})
   } catch (error) {
     console.log("[jarvis] local mic failed: " + (error.message || error))
     state.micBlocked = true
@@ -392,6 +487,7 @@ function localPause() {
   local.sending = false
   state.recognizing = false
   el("heard").hidden = true
+  updateMicMeter(0)
   updateVoiceIndicator()
 }
 
@@ -414,6 +510,7 @@ function localStop() {
   local.ctx = null
   state.recognizing = false
   el("heard").hidden = true
+  updateMicMeter(0)
   updateVoiceIndicator()
   fetch("/api/stt/stop", { method: "POST" }).catch(() => {})
 }
@@ -743,6 +840,7 @@ async function boot() {
   el("handsFree").checked = state.handsFree
   state.noWake = localStorage.getItem("jarvis-nowake") === "1"
   el("noWake").checked = state.noWake
+  listMics().catch(() => {})
 
   if (state.handsFree) {
     setListening(true)
@@ -815,6 +913,19 @@ el("noteForm").addEventListener("submit", async (event) => {
 el("notesClear").addEventListener("click", async () => {
   const result = await api("/api/notes/clear", {})
   renderNotes(result.notes)
+})
+
+el("micSelect").addEventListener("change", () => {
+  state.mic = el("micSelect").value
+  localStorage.setItem("jarvis-mic", state.mic)
+  console.log("[jarvis] mic selected: " + (state.mic === "" ? "default" : state.mic))
+  if (state.engine === "local" && local.stream !== null) {
+    localStop()
+    setTimeout(() => {
+      setListening(true)
+      updateVoiceIndicator()
+    }, 150)
+  }
 })
 
 el("reloadModels").addEventListener("click", refreshModels)

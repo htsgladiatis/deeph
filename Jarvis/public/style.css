@@ -311,6 +311,23 @@ textarea#input {
 .api-note { margin: 10px 0 0; font-size: 11px; color: var(--muted); word-break: break-word; }
 .api-note code { color: #bfe9ff; }
 
+.mic-meter {
+  height: 4px;
+  margin: 0 22px 6px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.mic-meter i {
+  display: block;
+  width: 0%;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #3ddc97, #57d9ff);
+  transition: width 80ms linear;
+}
+.mic-meter.loud i { background: linear-gradient(90deg, #ffd166, #ff8a5c); }
+
 @media (max-width: 980px) {
   .main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
   .side { flex-direction: row; overflow-x: auto; }
