@@ -6,7 +6,9 @@
  * Three things happen here:
  *   1. the copy gets its own DSH home (profiles, sessions, storages) and its own
  *      Electron userData, so the original installation is never touched and the
- *      two apps can keep separate settings;
+ *      two apps can keep separate settings. A `portable.txt` beside the exe
+ *      moves all of it into `<exe folder>\\andrey-data` instead, and a machine
+ *      without any profile first gets the shipped starting profile;
  *   2. the `freepi` provider is repointed at the local route and its model list
  *      is refreshed from the active account. The token itself is resolved per
  *      request by the route, so a switched account needs no restart;
@@ -23,11 +25,27 @@
 
 const path = require('node:path')
 const { app } = require('electron')
+const { resolveDataRoot, ensureProfileSeed } = require('./portable.cjs')
 
-const root = path.join(app.getPath('appData'), 'andrey-ds-harness')
-
+// A `portable.txt` beside the executable keeps every byte of state inside the
+// program folder; without it the app uses its own %APPDATA% directory.
+const { root, portable } = resolveDataRoot({
+  appData: app.getPath('appData'),
+  exeDir: path.dirname(app.getPath('exe')),
+})
+if (portable) process.env.ANDREY_PORTABLE = '1'
+if (!process.env.ANDREY_DATA_ROOT) process.env.ANDREY_DATA_ROOT = root
 if (!process.env.DSH_HOME) process.env.DSH_HOME = path.join(root, 'dsh-home')
 app.setPath('userData', path.join(root, 'desktop'))
+
+// A fresh machine has no profile, and the host would initialize one with an
+// empty patch layer: no freePi provider, so no way to add a freePi account.
+// The shipped seed has to be in place before the host reads the profile.
+try {
+  ensureProfileSeed({ dshHome: process.env.DSH_HOME })
+} catch {
+  /* the host boots on whatever profile exists */
+}
 
 // A switched freePi account is a changed bearer token in the provider entry.
 // Synchronous, no network, best effort: a missing profile or an unreadable store
