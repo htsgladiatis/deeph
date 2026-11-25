@@ -12,7 +12,7 @@ const state = {
   busy: false,
   controller: null,
   recognizing: false,
-  handsFree: false,
+  handsFree: true,
   timer: null,
   voices: [],
   lastReply: "",
@@ -183,16 +183,21 @@ function createRecognition() {
   instance.onstart = () => {
     state.recognizing = true
     el("micBtn").setAttribute("aria-pressed", "true")
+    updateVoiceIndicator()
   }
   instance.onend = () => {
     state.recognizing = false
     el("micBtn").setAttribute("aria-pressed", "false")
+    updateVoiceIndicator()
+    if (state.handsFree && !state.micBlocked && !state.busy) scheduleListen()
   }
   instance.onerror = (event) => {
     state.recognizing = false
     el("micBtn").setAttribute("aria-pressed", "false")
+    updateVoiceIndicator()
     if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-      addMessage("assistant", "Браузер не дал доступ к микрофону: разреши его в настройках сайта.")
+      state.micBlocked = true
+      addMessage("assistant", "Браузер не дал доступ к микрофону: нажми на кнопку микрофона или разреши доступ в настройках сайта.")
     }
   }
   instance.onresult = (event) => {
@@ -201,23 +206,40 @@ function createRecognition() {
       text += event.results[index][0].transcript
     }
     const final = event.results[event.results.length - 1].isFinal
-    el("input").value = text.trim()
-    resizeInput()
+    if (!state.handsFree) {
+      el("input").value = text.trim()
+      resizeInput()
+    }
     if (final) {
       const phrase = text.trim()
       if (phrase === "") return
       if (state.handsFree) {
-        const lower = phrase.toLowerCase()
-        if (!lower.includes("джарвис") && !lower.includes("jarvis")) return
-        const stripped = phrase.replace(/джарвис|jarvis/gi, "").replace(/^[\s,.!?:-]+/, "").trim()
-        if (stripped === "") return
-        send(stripped)
+        const parsed = stripWake(phrase)
+        if (parsed === null) return
+        if (parsed.rest === "") {
+          addMessage("assistant", "Слушаю, Андрей.")
+          if (state.settings.autospeak) speak("Слушаю, Андрей.")
+          scheduleListen()
+          return
+        }
+        send(parsed.rest)
         return
       }
       send(phrase)
     }
   }
   return instance
+}
+
+const stripWake = JarvisWake.stripWake
+
+function updateVoiceIndicator() {
+  const chip = el("voiceChip")
+  el("micBtn").classList.toggle("live", state.recognizing === true)
+  if (chip === null) return
+  chip.hidden = !(state.handsFree && recognition !== null)
+  chip.textContent = state.recognizing ? "\u25cf слушаю" : "\u25cb микрофон"
+  chip.classList.toggle("live", state.recognizing === true)
 }
 
 function setListening(on) {
@@ -284,6 +306,7 @@ function pickVoice() {
 
 function speak(text) {
   if (!window.speechSynthesis) return
+  if (state.recognizing) setListening(false)
   window.speechSynthesis.cancel()
   const utterance = new SpeechSynthesisUtterance(text)
   const voice = pickVoice()
@@ -488,11 +511,24 @@ async function boot() {
     addMessage("assistant", "Сервер не отвечает: " + error.message)
   }
 
-  state.handsFree = localStorage.getItem("jarvis-handsfree") === "1"
+  state.handsFree = localStorage.getItem("jarvis-handsfree") !== "0"
   el("handsFree").checked = state.handsFree
 
+  if (state.handsFree) {
+    setListening(true)
+    const retry = () => {
+      if (state.handsFree && (!state.recognizing || state.micBlocked)) {
+        state.micBlocked = false
+        setListening(true)
+      }
+    }
+    document.addEventListener("pointerdown", retry)
+    document.addEventListener("keydown", retry)
+  }
+  updateVoiceIndicator()
+
   if (state.messages.length === 0) {
-    addMessage("assistant", "Джарвис на связи. Скажи «который час», «открой калькулятор», «запомни …» или просто спроси что угодно.")
+    addMessage("assistant", "Джарвис на связи. Скажи вслух «Привет, Андрей, который час» или «Джарвис, открой калькулятор» — я слушаю. Можно и текстом.")
   }
 
   await refreshStatus()
@@ -516,6 +552,7 @@ el("input").addEventListener("keydown", (event) => {
 
 el("micBtn").addEventListener("click", () => {
   if (recognition === null) return
+  state.micBlocked = false
   if (state.recognizing) {
     setListening(false)
     return
@@ -545,8 +582,13 @@ el("saveSettings").addEventListener("click", () => { saveSettings().catch((error
 el("handsFree").addEventListener("change", () => {
   state.handsFree = el("handsFree").checked
   localStorage.setItem("jarvis-handsfree", state.handsFree ? "1" : "0")
-  if (state.handsFree) setListening(true)
-  else setListening(false)
+  updateVoiceIndicator()
+  if (state.handsFree) {
+    state.micBlocked = false
+    setListening(true)
+  } else {
+    setListening(false)
+  }
 })
 
 document.addEventListener("keydown", (event) => {

@@ -20,6 +20,7 @@
       <div class="status">
         <span class="chip" id="modelChip" title="Модель">—</span>
         <span class="chip timer" id="timerChip" hidden>00:00</span>
+        <span class="chip voice" id="voiceChip" hidden>микрофон</span>
         <span class="dot" id="statusDot" title="Мозг"></span>
         <span class="status-text" id="statusText">проверяю маршрут…</span>
       </div>
@@ -28,7 +29,7 @@
     <main class="main">
       <section class="chat-wrap">
         <div class="chat" id="chat" aria-live="polite"></div>
-        <div class="hint" id="hint">Enter — отправить · Ctrl+M — микрофон · Esc — стоп</div>
+        <div class="hint" id="hint">Скажи вслух «Привет, Андрей, …» · Enter — текст · Ctrl+M — микрофон · Esc — стоп</div>
         <form class="composer" id="composer">
           <button type="button" class="icon-btn mic" id="micBtn" title="Говорить (Ctrl+M)" aria-pressed="false">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
@@ -81,8 +82,8 @@
             <span>Озвучивать ответы</span>
           </label>
           <label class="field-row">
-            <input type="checkbox" id="handsFree" />
-            <span>Слушать постоянно (слово «Джарвис»)</span>
+            <input type="checkbox" id="handsFree" checked />
+            <span>Слушать всегда — «Привет, Андрей» / «Джарвис»</span>
           </label>
           <label class="field">
             <span>Характер</span>
@@ -94,6 +95,7 @@
       </aside>
     </main>
   </div>
+  <script src="/wake.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

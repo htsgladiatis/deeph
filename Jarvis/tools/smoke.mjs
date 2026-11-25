@@ -20,6 +20,10 @@ import {
 } from "../src/assistant.mjs"
 import { createStore } from "../src/store.mjs"
 
+// wake.js — обычный браузерный скрипт, грузим его в контекст Node
+new Function(fs.readFileSync(new URL("../public/wake.js", import.meta.url), "utf8"))()
+const { stripWake } = globalThis.JarvisWake
+
 let passed = 0
 let failed = 0
 
@@ -111,6 +115,24 @@ check("память в системном промпте", () => {
 check("озвучка заметок", () => {
   assert.equal(notesSpeech([]), "Заметок пока нет")
   assert.match(notesSpeech([{ text: "молоко" }]), /1\. молоко/)
+})
+
+check("слово-обращение «Привет, Андрей»", () => {
+  assert.deepEqual(stripWake("Привет, Андрей, который час"), { greeting: true, rest: "который час" })
+  assert.deepEqual(stripWake("привет андрей открой ютуб"), { greeting: true, rest: "открой ютуб" })
+  assert.deepEqual(stripWake("ПРИВЕТ АНДРЕЙ скажи анекдот"), { greeting: true, rest: "скажи анекдот" })
+  assert.deepEqual(stripWake("Привет, Андрей"), { greeting: true, rest: "" })
+})
+
+check("слово-обращение «Джарвис» и имя", () => {
+  assert.deepEqual(stripWake("Джарвис, который час"), { greeting: false, rest: "который час" })
+  assert.deepEqual(stripWake("Андрей, запомни купить молоко"), { greeting: false, rest: "запомни купить молоко" })
+  assert.deepEqual(stripWake("скажи джарвис привет"), { greeting: false, rest: "скажи привет" })
+})
+
+check("фраза без обращения игнорируется", () => {
+  assert.equal(stripWake("просто вопрос без обращения"), null)
+  assert.equal(stripWake(""), null)
 })
 
 check("хранилище: заметки и настройки", () => {
