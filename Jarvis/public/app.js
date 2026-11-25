@@ -182,6 +182,7 @@ function createRecognition() {
   instance.maxAlternatives = 1
   instance.onstart = () => {
     state.recognizing = true
+    state.micStarted = true
     el("micBtn").setAttribute("aria-pressed", "true")
     updateVoiceIndicator()
   }
@@ -235,10 +236,12 @@ const stripWake = JarvisWake.stripWake
 
 function updateVoiceIndicator() {
   const chip = el("voiceChip")
+  const gate = el("micGate")
   el("micBtn").classList.toggle("live", state.recognizing === true)
+  if (gate !== null) gate.hidden = !(state.handsFree && recognition !== null && !state.recognizing && (!state.micStarted || state.micBlocked))
   if (chip === null) return
   chip.hidden = !(state.handsFree && recognition !== null)
-  chip.textContent = state.recognizing ? "\u25cf слушаю" : "\u25cb микрофон"
+  chip.textContent = state.recognizing ? "\u25cf слушаю" : "\u25cb пауза"
   chip.classList.toggle("live", state.recognizing === true)
 }
 
@@ -558,6 +561,12 @@ el("micBtn").addEventListener("click", () => {
     return
   }
   setListening(true)
+})
+
+el("micGate").addEventListener("click", () => {
+  state.micBlocked = false
+  setListening(true)
+  updateVoiceIndicator()
 })
 
 el("stopBtn").addEventListener("click", stopAll)
