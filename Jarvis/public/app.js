@@ -13,6 +13,12 @@ const state = {
   controller: null,
   recognizing: false,
   handsFree: true,
+  engine: "web",
+  noWake: false,
+  speaking: false,
+  followUpUntil: 0,
+  micStarted: false,
+  micBlocked: false,
   timer: null,
   voices: [],
   lastReply: "",
@@ -76,6 +82,8 @@ function stopAll() {
     state.controller = null
   }
   if (window.speechSynthesis) window.speechSynthesis.cancel()
+  state.speaking = false
+  state.followUpUntil = 0
   setBusy(false)
   setListening(false)
 }
@@ -136,7 +144,7 @@ async function send(text) {
     target.bubble.classList.remove("streaming")
     state.controller = null
     setBusy(false)
-    if (state.handsFree) scheduleListen()
+    if (state.handsFree && !state.speaking) scheduleListen()
   }
 }
 
@@ -178,27 +186,35 @@ function createRecognition() {
   const instance = new SpeechRecognition()
   instance.lang = "ru-RU"
   instance.interimResults = true
-  instance.continuous = false
+  instance.continuous = true
   instance.maxAlternatives = 1
   instance.onstart = () => {
     state.recognizing = true
     state.micStarted = true
     el("micBtn").setAttribute("aria-pressed", "true")
     updateVoiceIndicator()
+    console.log("[jarvis] mic start")
   }
   instance.onend = () => {
     state.recognizing = false
     el("micBtn").setAttribute("aria-pressed", "false")
+    el("heard").hidden = true
     updateVoiceIndicator()
+    console.log("[jarvis] mic end")
     if (state.handsFree && !state.micBlocked && !state.busy) scheduleListen()
   }
   instance.onerror = (event) => {
     state.recognizing = false
     el("micBtn").setAttribute("aria-pressed", "false")
+    el("heard").hidden = true
     updateVoiceIndicator()
+    console.log("[jarvis] mic error " + event.error)
     if (event.error === "not-allowed" || event.error === "service-not-allowed") {
       state.micBlocked = true
       addMessage("assistant", "Браузер не дал доступ к микрофону: нажми на кнопку микрофона или разреши доступ в настройках сайта.")
+    } else if (event.error === "network") {
+      state.micBlocked = true
+      addMessage("assistant", "Распознавание речи не доходит до сервера (ошибка сети). Отключи VPN/блокировщик для этого сайта или включи режим «Без обращения» в настройках.")
     }
   }
   instance.onresult = (event) => {
@@ -211,25 +227,32 @@ function createRecognition() {
       el("input").value = text.trim()
       resizeInput()
     }
-    if (final) {
-      const phrase = text.trim()
-      if (phrase === "") return
-      if (state.handsFree) {
-        const parsed = stripWake(phrase)
-        if (parsed === null) return
-        if (parsed.rest === "") {
-          addMessage("assistant", "Слушаю, Андрей.")
-          if (state.settings.autospeak) speak("Слушаю, Андрей.")
-          scheduleListen()
-          return
-        }
-        send(parsed.rest)
-        return
-      }
-      send(phrase)
-    }
+    if (final) handlePhrase(text)
   }
   return instance
+}
+
+/** Обрабатывает распознанную фразу: отбрасывает обращения, отправляет остальное в чат. */
+function handlePhrase(phrase) {
+  const text = String(phrase || "").trim()
+  if (text === "") return
+  if (state.speaking) return
+  if (state.handsFree) {
+    const parsed = stripWake(text)
+    if (parsed === null) {
+      if (state.noWake || Date.now() < state.followUpUntil) send(text)
+      return
+    }
+    if (parsed.rest === "") {
+      addMessage("assistant", "Слушаю, Андрей.")
+      if (state.settings.autospeak) speak("Слушаю, Андрей.")
+      scheduleListen()
+      return
+    }
+    send(parsed.rest)
+    return
+  }
+  send(text)
 }
 
 const stripWake = JarvisWake.stripWake
@@ -238,14 +261,173 @@ function updateVoiceIndicator() {
   const chip = el("voiceChip")
   const gate = el("micGate")
   el("micBtn").classList.toggle("live", state.recognizing === true)
-  if (gate !== null) gate.hidden = !(state.handsFree && recognition !== null && !state.recognizing && (!state.micStarted || state.micBlocked))
+  if (gate !== null) gate.hidden = !(state.handsFree && hasMic() && !state.recognizing && (!state.micStarted || state.micBlocked))
   if (chip === null) return
-  chip.hidden = !(state.handsFree && recognition !== null)
+  chip.hidden = !(state.handsFree && hasMic())
   chip.textContent = state.recognizing ? "\u25cf слушаю" : "\u25cb пауза"
   chip.classList.toggle("live", state.recognizing === true)
 }
 
+function hasMic() {
+  return state.engine === "local" || recognition !== null
+}
+
+/* ---------- голос: локальное распознавание (Vosk) ---------- */
+
+const local = {
+  ctx: null,
+  stream: null,
+  source: null,
+  processor: null,
+  events: null,
+  sending: false,
+  inflight: 0,
+  starting: false,
+}
+
+function localEvents() {
+  if (local.events !== null) return
+  const source = new EventSource("/api/stt/events")
+  source.onmessage = (event) => {
+    let data
+    try {
+      data = JSON.parse(event.data)
+    } catch {
+      return
+    }
+    if (data.type === "partial") {
+      if (data.text !== "") {
+        el("heard").hidden = false
+        el("heard").textContent = "слышу: " + data.text
+      }
+      return
+    }
+    if (data.type === "final") {
+      el("heard").hidden = true
+      console.log("[jarvis] local final: " + data.text)
+      handlePhrase(data.text)
+      return
+    }
+    if (data.type === "ready") console.log("[jarvis] stt ready")
+    if (data.type === "error") {
+      console.log("[jarvis] stt error: " + data.message)
+      state.micBlocked = true
+      updateVoiceIndicator()
+    }
+  }
+  local.events = source
+}
+
+function toPcm16(samples, rate) {
+  let data = samples
+  if (rate !== 16000) {
+    const ratio = rate / 16000
+    const length = Math.floor(samples.length / ratio)
+    data = new Float32Array(length)
+    for (let index = 0; index < length; index += 1) {
+      const position = index * ratio
+      const left = Math.floor(position)
+      const right = Math.min(left + 1, samples.length - 1)
+      const mix = position - left
+      data[index] = samples[left] * (1 - mix) + samples[right] * mix
+    }
+  }
+  const pcm = new Int16Array(data.length)
+  for (let index = 0; index < data.length; index += 1) {
+    const value = Math.max(-1, Math.min(1, data[index]))
+    pcm[index] = value < 0 ? value * 0x8000 : value * 0x7fff
+  }
+  return new Uint8Array(pcm.buffer)
+}
+
+async function localStart() {
+  if (state.engine !== "local" || local.stream !== null || local.starting) return
+  local.starting = true
+  try {
+    localEvents()
+    const started = await fetch("/api/stt/start", { method: "POST" }).then((res) => res.json())
+    if (started.ok !== true) throw new Error(started.error || "нет модели распознавания")
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    })
+    const ctx = new AudioContext({ sampleRate: 16000 })
+    await ctx.resume()
+    const source = ctx.createMediaStreamSource(stream)
+    const processor = ctx.createScriptProcessor(4096, 1, 1)
+    const rate = ctx.sampleRate
+    processor.onaudioprocess = (event) => {
+      if (!local.sending || local.inflight > 2) return
+      const pcm = toPcm16(event.inputBuffer.getChannelData(0), rate)
+      local.inflight += 1
+      fetch("/api/stt/chunk", { method: "POST", body: pcm })
+        .catch(() => {})
+        .finally(() => {
+          local.inflight -= 1
+        })
+    }
+    source.connect(processor)
+    processor.connect(ctx.destination)
+    local.ctx = ctx
+    local.stream = stream
+    local.source = source
+    local.processor = processor
+    local.sending = true
+    state.recognizing = true
+    state.micStarted = true
+    state.micBlocked = false
+    el("micBtn").setAttribute("aria-pressed", "true")
+    updateVoiceIndicator()
+    console.log("[jarvis] local mic on, rate=" + rate)
+  } catch (error) {
+    console.log("[jarvis] local mic failed: " + (error.message || error))
+    state.micBlocked = true
+    state.recognizing = false
+    updateVoiceIndicator()
+  } finally {
+    local.starting = false
+  }
+}
+
+function localPause() {
+  local.sending = false
+  state.recognizing = false
+  el("heard").hidden = true
+  updateVoiceIndicator()
+}
+
+function localResume() {
+  if (local.stream === null) return
+  local.sending = true
+  state.recognizing = true
+  updateVoiceIndicator()
+}
+
+function localStop() {
+  local.sending = false
+  if (local.processor !== null) local.processor.disconnect()
+  if (local.source !== null) local.source.disconnect()
+  if (local.stream !== null) local.stream.getTracks().forEach((track) => track.stop())
+  if (local.ctx !== null) local.ctx.close().catch(() => {})
+  local.processor = null
+  local.source = null
+  local.stream = null
+  local.ctx = null
+  state.recognizing = false
+  el("heard").hidden = true
+  updateVoiceIndicator()
+  fetch("/api/stt/stop", { method: "POST" }).catch(() => {})
+}
+
 function setListening(on) {
+  if (state.engine === "local") {
+    if (on) {
+      if (local.stream !== null) localResume()
+      else localStart().catch(() => {})
+    } else {
+      localPause()
+    }
+    return
+  }
   if (recognition === null) return
   if (on && !state.recognizing) {
     try {
@@ -308,19 +490,54 @@ function pickVoice() {
 }
 
 function speak(text) {
-  if (!window.speechSynthesis) return
+  if (!window.speechSynthesis) {
+    console.log("[jarvis] speak skipped: no speechSynthesis")
+    return
+  }
   if (state.recognizing) setListening(false)
   window.speechSynthesis.cancel()
+  window.speechSynthesis.resume()
   const utterance = new SpeechSynthesisUtterance(text)
   const voice = pickVoice()
   if (voice !== null) utterance.voice = voice
   utterance.lang = voice !== null ? voice.lang : "ru-RU"
-  utterance.rate = 1.02
+  utterance.rate = 1.12
   utterance.pitch = 0.95
-  utterance.onend = () => {
+  utterance.volume = 1
+  console.log("[jarvis] speak voices=" + state.voices.length + " voice=" + (voice === null ? "default" : voice.name) + " text=" + text.slice(0, 60))
+  state.speaking = true
+  let finished = false
+  const finish = (reason) => {
+    if (finished) return
+    finished = true
+    state.speaking = false
+    state.followUpUntil = Date.now() + 12000
+    console.log("[jarvis] speak done (" + reason + ")")
     if (state.handsFree) scheduleListen()
   }
+  utterance.onstart = () => console.log("[jarvis] speak start")
+  utterance.onerror = (event) => {
+    console.log("[jarvis] speak error " + event.error)
+    finish("error")
+  }
+  utterance.onend = () => finish("end")
   window.speechSynthesis.speak(utterance)
+  // Страховка: в Brave событие end иногда теряется, микрофон не должен залипать.
+  const expected = Math.min(20000, Math.max(2500, text.length * 95))
+  const watchdog = setInterval(() => {
+    if (finished) {
+      clearInterval(watchdog)
+      return
+    }
+    if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
+      clearInterval(watchdog)
+      finish("idle")
+    }
+  }, 600)
+  setTimeout(() => {
+    clearInterval(watchdog)
+    finish("timeout")
+  }, expected * 1.8 + 2500)
 }
 
 /* ---------- таймер ---------- */
@@ -514,8 +731,18 @@ async function boot() {
     addMessage("assistant", "Сервер не отвечает: " + error.message)
   }
 
+  try {
+    const sttInfo = await api("/api/stt/status")
+    if (sttInfo.available === true) state.engine = "local"
+    console.log("[jarvis] stt engine=" + state.engine + " model=" + (sttInfo.model || "none"))
+  } catch {
+    state.engine = "web"
+  }
+
   state.handsFree = localStorage.getItem("jarvis-handsfree") !== "0"
   el("handsFree").checked = state.handsFree
+  state.noWake = localStorage.getItem("jarvis-nowake") === "1"
+  el("noWake").checked = state.noWake
 
   if (state.handsFree) {
     setListening(true)
@@ -554,13 +781,18 @@ el("input").addEventListener("keydown", (event) => {
 })
 
 el("micBtn").addEventListener("click", () => {
-  if (recognition === null) return
+  if (!hasMic()) return
   state.micBlocked = false
   if (state.recognizing) {
     setListening(false)
     return
   }
   setListening(true)
+})
+
+el("testVoice").addEventListener("click", () => {
+  console.log("[jarvis] test voice clicked, synth=" + (typeof window.speechSynthesis) + " voices=" + state.voices.length)
+  speak("Привет, Андрей. Это проверка голоса.")
 })
 
 el("micGate").addEventListener("click", () => {
@@ -587,6 +819,12 @@ el("notesClear").addEventListener("click", async () => {
 
 el("reloadModels").addEventListener("click", refreshModels)
 el("saveSettings").addEventListener("click", () => { saveSettings().catch((error) => addMessage("assistant", "Не сохранилось: " + error.message)) })
+
+el("noWake").addEventListener("change", () => {
+  state.noWake = el("noWake").checked
+  localStorage.setItem("jarvis-nowake", state.noWake ? "1" : "0")
+  console.log("[jarvis] noWake=" + state.noWake)
+})
 
 el("handsFree").addEventListener("change", () => {
   state.handsFree = el("handsFree").checked

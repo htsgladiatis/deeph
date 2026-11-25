@@ -29,6 +29,7 @@
     <main class="main">
       <section class="chat-wrap">
         <div class="chat" id="chat" aria-live="polite"></div>
+        <div class="heard" id="heard" hidden></div>
         <div class="hint" id="hint">Скажи вслух «Привет, Андрей, …» · Enter — текст · Ctrl+M — микрофон · Esc — стоп</div>
         <button class="mic-gate" id="micGate" type="button" hidden>Нажмите, чтобы включить микрофон и говорить</button>
         <form class="composer" id="composer">
@@ -77,6 +78,7 @@
           <label class="field">
             <span>Голос</span>
             <select id="voiceSelect"></select>
+            <button class="link-btn" type="button" id="testVoice">проверить голос</button>
           </label>
           <label class="field-row">
             <input type="checkbox" id="autospeak" checked />
@@ -85,6 +87,10 @@
           <label class="field-row">
             <input type="checkbox" id="handsFree" checked />
             <span>Слушать всегда — «Привет, Андрей» / «Джарвис»</span>
+          </label>
+          <label class="field-row">
+            <input type="checkbox" id="noWake" />
+            <span>Без обращения — реагировать на любую фразу</span>
           </label>
           <label class="field">
             <span>Характер</span>

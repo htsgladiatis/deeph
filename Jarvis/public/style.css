@@ -23,6 +23,20 @@
   box-shadow: 0 0 0 3px rgba(80, 216, 255, 0.12), 0 0 18px rgba(80, 216, 255, 0.25);
 }
 
+.heard {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px dashed rgba(80, 216, 255, 0.28);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.heard b {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .mic-gate {
   display: block;
   width: 100%;

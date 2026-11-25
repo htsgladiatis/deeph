@@ -69,6 +69,8 @@ check("время и дата по-русски", () => {
 
 check("локальные команды", () => {
   assert.equal(handleLocal("который час").reply, timeReply())
+  assert.equal(handleLocal("сколько время").reply, timeReply())
+  assert.equal(handleLocal("сколько сейчас времени").reply, timeReply())
   assert.match(handleLocal("какое сегодня число").reply, /Сегодня/)
   assert.equal(handleLocal("открой калькулятор").action.target.value, "calc")
   assert.equal(handleLocal("открой ютуб").action.target.value, "https://youtube.com")

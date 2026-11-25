@@ -16,6 +16,7 @@ import { spawn } from "node:child_process"
 
 import { LlmClient, resolveConfig } from "./src/llm.mjs"
 import { createStore } from "./src/store.mjs"
+import { LocalStt, sttStatus } from "./src/stt.mjs"
 import {
   composeMessages,
   handleLocal,
@@ -32,6 +33,90 @@ const config = resolveConfig(process.env)
 const store = createStore(DATA_DIR)
 const llm = new LlmClient(config)
 const logFile = path.join(DATA_DIR, "jarvis.log")
+
+/* ---------- локальное распознавание речи (Vosk) ---------- */
+
+const stt = { session: null, clients: new Set(), timer: null }
+
+function sttBroadcast(event) {
+  const payload = "data: " + JSON.stringify(event) + "\n\n"
+  for (const client of stt.clients) {
+    try {
+      client.write(payload)
+    } catch {
+      stt.clients.delete(client)
+    }
+  }
+}
+
+function sttTouch() {
+  if (stt.timer !== null) clearTimeout(stt.timer)
+  stt.timer = setTimeout(() => {
+    sttShutdown("простой")
+  }, 120000)
+  stt.timer.unref?.()
+}
+
+function sttEnsure() {
+  const info = sttStatus(HERE)
+  if (!info.available) return { ok: false, error: "нет модели Vosk в папке models" }
+  if (stt.session === null) {
+    const modelPath = path.join(HERE, "models", info.model)
+    const session = new LocalStt({
+      python: process.env.JARVIS_PYTHON || "python",
+      worker: path.join(HERE, "stt", "stt_worker.py"),
+      model: modelPath,
+    })
+    session.on("ready", () => {
+      log("stt-ready", { model: info.model })
+      sttBroadcast({ type: "ready" })
+    })
+    session.on("partial", (text) => sttBroadcast({ type: "partial", text }))
+    session.on("final", (text) => sttBroadcast({ type: "final", text }))
+    session.on("error", (error) => {
+      log("stt-failed", { message: String(error?.message ?? error) })
+      sttBroadcast({ type: "error", message: String(error?.message ?? error) })
+    })
+    session.on("exit", (code) => {
+      if (stt.session === session) stt.session = null
+      sttBroadcast({ type: "exit", code })
+    })
+    stt.session = session
+    session.start()
+  }
+  sttTouch()
+  return { ok: true, model: info.model }
+}
+
+function sttShutdown(reason) {
+  if (stt.timer !== null) {
+    clearTimeout(stt.timer)
+    stt.timer = null
+  }
+  if (stt.session !== null) {
+    stt.session.stop()
+    stt.session = null
+    log("stt-stop", { reason: reason ?? "" })
+  }
+}
+
+function readRaw(req, limit = 2_000_000) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    req.on("data", (chunk) => {
+      size += chunk.length
+      if (size > limit) {
+        reject(new Error("слишком много звука"))
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on("end", () => resolve(Buffer.concat(chunks)))
+    req.on("error", reject)
+  })
+}
 
 function loadEnv(file) {
   let text = ""
@@ -254,6 +339,65 @@ async function route(req, res) {
   if (pathname === "/api/state") {
     const status = await llm.status()
     sendJson(res, 200, { status, notes: store.notes(), settings: store.settings() })
+    return
+  }
+
+  if (pathname === "/api/stt/status") {
+    sendJson(res, 200, { ...sttStatus(HERE), engine: "vosk", running: stt.session !== null })
+    return
+  }
+
+  if (pathname === "/api/stt/start" && req.method === "POST") {
+    try {
+      sendJson(res, 200, sttEnsure())
+    } catch (error) {
+      sendJson(res, 500, { ok: false, error: String(error?.message ?? error) })
+    }
+    return
+  }
+
+  if (pathname === "/api/stt/chunk" && req.method === "POST") {
+    try {
+      const audio = await readRaw(req)
+      if (stt.session === null) sttEnsure()
+      if (stt.session !== null && audio.length > 0) {
+        stt.session.push(audio)
+        sttTouch()
+      }
+      res.writeHead(204)
+      res.end()
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: String(error?.message ?? error) })
+    }
+    return
+  }
+
+  if (pathname === "/api/stt/stop" && req.method === "POST") {
+    sttShutdown("клиент")
+    sendJson(res, 200, { ok: true })
+    return
+  }
+
+  if (pathname === "/api/stt/events") {
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    })
+    res.write("data: " + JSON.stringify({ type: "hello" }) + "\n\n")
+    stt.clients.add(res)
+    const keep = setInterval(() => {
+      try {
+        res.write(": ping\n\n")
+      } catch {
+        /* клиент ушёл */
+      }
+    }, 25000)
+    req.on("close", () => {
+      clearInterval(keep)
+      stt.clients.delete(res)
+    })
     return
   }
 

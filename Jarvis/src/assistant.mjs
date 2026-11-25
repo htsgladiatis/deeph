@@ -124,7 +124,7 @@ export function handleLocal(text) {
   const phrase = normalize(text).toLowerCase().replace(/[!?.,]+$/, "")
   if (phrase === "") return null
 
-  if (/^(котор(ый|ое) час|сколько времени|время)$/.test(phrase) || /который (сейчас )?час/.test(phrase)) {
+  if (/^(котор(ый|ое) час|сколько (сейчас )?врем(я|ени)|время)$/.test(phrase) || /который (сейчас )?час/.test(phrase) || /сколько (сейчас )?врем/.test(phrase)) {
     return { reply: timeReply() }
   }
   if (/^(какое сегодня|какой сегодня|какое число|сегодняшняя дата|дата)$/.test(phrase) || /(какое|какой) (сегодня )?(число|день|дата)/.test(phrase)) {
