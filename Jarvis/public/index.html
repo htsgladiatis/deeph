@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Джарвис</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2213%22 fill=%22none%22 stroke=%22%2350d8ff%22 stroke-width=%222%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%225%22 fill=%22%238ff6ff%22/%3E%3C/svg%3E" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="reactor" id="reactor" aria-hidden="true"></span>
+        <div class="brand-text">
+          <h1>Джарвис</h1>
+          <p class="sub">голосовой ассистент · freePi</p>
+        </div>
+      </div>
+      <div class="status">
+        <span class="chip" id="modelChip" title="Модель">—</span>
+        <span class="chip timer" id="timerChip" hidden>00:00</span>
+        <span class="dot" id="statusDot" title="Мозг"></span>
+        <span class="status-text" id="statusText">проверяю маршрут…</span>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="chat-wrap">
+        <div class="chat" id="chat" aria-live="polite"></div>
+        <div class="hint" id="hint">Enter — отправить · Ctrl+M — микрофон · Esc — стоп</div>
+        <form class="composer" id="composer">
+          <button type="button" class="icon-btn mic" id="micBtn" title="Говорить (Ctrl+M)" aria-pressed="false">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+              <path d="M5 11a7 7 0 0 0 14 0"></path>
+              <path d="M12 18v3"></path>
+            </svg>
+          </button>
+          <textarea id="input" rows="1" placeholder="Спроси что-нибудь или скажи «открой калькулятор»…" autofocus></textarea>
+          <button type="button" class="icon-btn stop" id="stopBtn" title="Остановить (Esc)" hidden>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+          </button>
+          <button type="submit" class="send-btn" id="sendBtn" title="Отправить">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 12h15"></path>
+              <path d="M13 6l6 6-6 6"></path>
+            </svg>
+          </button>
+        </form>
+      </section>
+
+      <aside class="side" id="side">
+        <div class="card">
+          <div class="card-head">
+            <h2>Память</h2>
+            <button class="link-btn" id="notesClear" type="button">очистить</button>
+          </div>
+          <form class="note-form" id="noteForm">
+            <input id="noteInput" type="text" placeholder="Запомнить: …" />
+            <button type="submit" class="mini-btn">+</button>
+          </form>
+          <ul class="notes" id="notesList"></ul>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Настройки</h2>
+            <button class="link-btn" id="reloadModels" type="button">обновить</button>
+          </div>
+          <label class="field">
+            <span>Модель</span>
+            <select id="modelSelect"></select>
+          </label>
+          <label class="field">
+            <span>Голос</span>
+            <select id="voiceSelect"></select>
+          </label>
+          <label class="field-row">
+            <input type="checkbox" id="autospeak" checked />
+            <span>Озвучивать ответы</span>
+          </label>
+          <label class="field-row">
+            <input type="checkbox" id="handsFree" />
+            <span>Слушать постоянно (слово «Джарвис»)</span>
+          </label>
+          <label class="field">
+            <span>Характер</span>
+            <textarea id="systemPrompt" rows="4" placeholder="Системная инструкция для модели"></textarea>
+          </label>
+          <button class="save-btn" id="saveSettings" type="button">Сохранить</button>
+          <p class="api-note" id="apiNote"></p>
+        </div>
+      </aside>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

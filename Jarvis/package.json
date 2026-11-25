@@ -1,0 +1,13 @@
+{
+  "name": "jarvis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Jarvis - voice assistant on freePi (no Ollama)",
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check src/llm.mjs && node --check src/assistant.mjs && node --check src/store.mjs && node --check src/sse.mjs && node --check public/app.js && node --check tools/smoke.mjs",
+    "smoke": "node tools/smoke.mjs"
+  },
+  "engines": { "node": ">=20" }
+}
