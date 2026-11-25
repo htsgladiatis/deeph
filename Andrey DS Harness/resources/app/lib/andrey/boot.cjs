@@ -7,7 +7,7 @@
  *   1. the copy gets its own DSH home (profiles, sessions, storages) and its own
  *      Electron userData, so the original installation is never touched and the
  *      two apps can keep separate settings. A `portable.txt` beside the exe
- *      moves all of it into `<exe folder>\\andrey-data` instead, and a machine
+ *      moves all of it into `<exe folder>/andrey-data` instead, and a machine
  *      without any profile first gets the shipped starting profile;
  *   2. the `freepi` provider is repointed at the local route and its model list
  *      is refreshed from the active account. The token itself is resolved per
