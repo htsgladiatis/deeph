@@ -1,9 +1,24 @@
-# Andrey DS Harness V 0.5.7
+# Andrey DS Harness V 0.5.8
 
 Копия DeepSeek Harness с собственным слоем `lib/andrey` (загружается через
 `resources/app/package.json` → `main: lib/andrey/boot.cjs`). Правки в этом каталоге
 применяются сразу: `resources/app` распакован, asar пересобирать не нужно — только
 перезапустить приложение.
+
+## Скачать и запустить
+
+Два `.exe` в репозитории лежат в Git LFS. «Download ZIP» на GitHub и клон без LFS
+дают вместо них текстовые указатели на пару сотен байт — такое приложение не запустится.
+Правильно так:
+
+```
+git lfs install
+git clone https://github.com/htsgladiatis/deeph.git
+```
+
+Запускать из клона: `Andrey DS Harness\DeepSeek Harness.exe`. Проверка, что скачалось
+именно приложение, а не указатель: размер `DeepSeek Harness.exe` должен быть десятки
+мегабайт, а не ~130 байт. Версию показывает меню «…»: `Andrey Version 0.5.8`.
 
 ## Дизайн
 
